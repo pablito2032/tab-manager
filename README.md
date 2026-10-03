@@ -4,7 +4,7 @@ Gestor web personal de enlaces pendientes: sustituye el hábito de tener decenas
 
 Sitio 100 % estático: HTML, CSS y JavaScript (módulos ES) con **Vue 3** y **SortableJS** cargados desde CDN. Sin Node.js, sin npm y sin paso de compilación.
 
-> **Estado:** completo (6 de 6 fases). Funciona en cualquier navegador moderno (Chrome, Edge, Firefox, Safari) en escritorio y móvil.
+> **Estado:** completo (6 de 6 fases). Probado en Chromium (escritorio y móvil emulado); usa solo funciones web estándar disponibles en las versiones actuales de Chrome, Edge, Firefox y Safari.
 
 ## Ejecutar en local
 
