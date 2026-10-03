@@ -1573,3 +1573,94 @@ mark {
 .link-item.is-previewing .link-item__actions {
   opacity: 1;
 }
+
+/* ==========================================================================
+   Fase 5 — Copia de seguridad y sincronización
+   ========================================================================== */
+.settings-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.import-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  font-size: var(--text-sm);
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.sync-connect,
+.sync-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.sync-steps {
+  padding-left: var(--space-5);
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  list-style: decimal;
+}
+
+.sync-steps li + li {
+  margin-top: var(--space-1);
+}
+
+code {
+  padding: 1px 5px;
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+}
+
+.input--mono {
+  font-family: var(--font-mono);
+}
+
+.sync-status {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: var(--space-3);
+  padding: var(--space-4);
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.sync-status dt {
+  font-size: var(--text-xs);
+  color: var(--color-text-subtle);
+}
+
+.sync-status dd {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+}
+
+.sync-message {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+.sync-message--ok {
+  color: var(--color-success);
+}
+
+/* El modal de ajustes es algo más ancho por su contenido */
+@media (min-width: 600px) {
+  .modal:has(#settings-sync-title) {
+    max-width: 640px;
+  }
+}

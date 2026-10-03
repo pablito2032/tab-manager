@@ -4,7 +4,7 @@ Gestor web personal de enlaces pendientes: sustituye el hábito de tener decenas
 
 Sitio 100 % estático: HTML, CSS y JavaScript (módulos ES) con **Vue 3** y **SortableJS** cargados desde CDN. Sin Node.js, sin npm y sin paso de compilación.
 
-> **Estado:** fase 4 de 6 (vista previa).
+> **Estado:** fase 5 de 6 (exportar/importar y sincronización en la nube).
 
 ## Ejecutar en local
 
@@ -26,9 +26,41 @@ Los módulos ES **no funcionan** abriendo `index.html` con `file://`; hace falta
 
 Todas las rutas son relativas, así que funciona igual en un subdirectorio.
 
-## Sincronización en la nube
+## Copia de seguridad (exportar / importar)
 
-*(Se documentará en la fase 5.)*
+En **Ajustes → Copia de seguridad**:
+
+- **Exportar JSON** descarga `tab-manager-AAAA-MM-DD.json` con todas tus cuentas, categorías y enlaces (nunca incluye el token de sincronización).
+- **Importar JSON** valida el archivo y te deja elegir:
+  - **Combinar**: añade lo que no tengas y conserva lo actual (no duplica enlaces con la misma URL en la misma categoría).
+  - **Reemplazar todo**: deja exactamente lo que hay en el archivo.
+- Antes de reemplazar datos (al importar o al descargar de la nube) se guarda automáticamente una copia; el enlace **Restaurarla** la recupera.
+
+## Sincronización en la nube (GitHub Gist)
+
+Los datos se guardan en un **Gist privado** de tu cuenta, en un archivo `tab-manager.json`. No hace falta ningún servidor: la app habla directamente con la API de GitHub desde el navegador.
+
+### Configuración
+
+1. Crea un **token clásico** en GitHub con **solo el permiso `gist`**: [github.com/settings/tokens/new?scopes=gist](https://github.com/settings/tokens/new?scopes=gist&description=Tab%20Manager). Ponle una fecha de caducidad.
+2. En Tab Manager abre **Ajustes → Sincronización con GitHub Gist**, pega el token y pulsa **Conectar**. La app comprueba el token y busca si ya tienes un Gist de Tab Manager.
+3. En el primer dispositivo pulsa **Subir**: se crea el Gist privado.
+4. En los demás dispositivos conecta el mismo token y pulsa **Sincronizar** (o **Descargar**).
+
+### Botones
+
+- **Subir**: la nube pasa a tener los datos de este navegador.
+- **Descargar**: este navegador pasa a tener los datos de la nube (se guarda una copia local antes).
+- **Sincronizar**: decide solo. Si solo cambió un lado, copia ese lado al otro; si no cambió nada, no hace nada.
+
+### Conflictos
+
+Tras cada sincronización se recuerda la fecha de modificación (`updatedAt`) de ambos lados. Si al sincronizar **los dos** han cambiado desde entonces, la app muestra las dos fechas y propone quedarse con la **más reciente**, previa confirmación. Además, *Subir* y *Descargar* avisan si van a sobrescribir una versión más reciente. Nada se pierde sin aviso: la versión local sustituida queda como copia restaurable, y GitHub conserva el historial de revisiones del Gist.
+
+### Seguridad del token
+
+- Se guarda **solo en `localStorage` de este navegador** (clave `tabmanager:sync`), nunca en el código, en el repositorio ni en las exportaciones.
+- Cualquiera con acceso a este navegador podría leerlo: usa un token con solo el permiso `gist` y con caducidad, y pulsa **Olvidar token** en equipos compartidos. Si sospechas que se ha filtrado, revócalo en GitHub.
 
 ## Estructura
 
@@ -73,7 +105,7 @@ Solo se sustituyen los títulos automáticos: si escribes uno propio, se respeta
 Pulsa el icono del ojo de un enlace para abrir su vista previa (solo se carga la de ese enlace). En escritorio aparece a la derecha; en móvil ocupa toda la pantalla. `Esc` la cierra.
 
 - **En vivo:** la página dentro de un `<iframe>` con `sandbox`. Para YouTube, Vimeo, Spotify y Google Docs/Drive se usa su versión incrustable oficial.
-- **Resumen:** tarjeta con título, descripción e imagen ([microlink.io](https://microlink.io) / [noembed.com](https://noembed.com)) y una captura de [thum.io](https://www.thum.io).
+- **Resumen:** tarjeta con título, descripción e imagen ([microlink.io](https://microlink.io) / [noembed.com](https://noembed.com)) y una captura de [thum.io](https://www.thum.io). Las webs protegidas con verificaciones anti-bots (p. ej. Cloudflare) no se pueden capturar: el servicio ve la verificación en lugar de la página, y la app lo indica.
 - **Abrir en pestaña nueva** siempre disponible, y un botón para marcar el enlace como visto.
 
 Muchas webs (Google, GitHub, X, Reddit…) prohíben mostrarse dentro de otras páginas, y el navegador no avisa cuando ocurre. Por eso la app abre directamente el resumen en los sitios que se sabe que lo bloquean, pasa al resumen si la página no responde en 12 s y, si ves la vista en blanco, el enlace **"¿Aparece en blanco? Ver el resumen"** recuerda ese dominio para la próxima vez (se puede deshacer con **Intentar en vivo**).
@@ -102,7 +134,7 @@ Todo se guarda automáticamente en `localStorage` del navegador (clave `tabmanag
 - El campo `version` permite migrar el formato en el futuro (`migrateData` en `js/storage.js`); al cargar se validan los datos y se descartan registros huérfanos o inválidos.
 - Si tienes la app abierta en varias pestañas, los cambios se sincronizan entre ellas.
 - Los títulos obtenidos de servicios externos se guardan en caché (`tabmanager:title-cache`) para no repetir consultas, y los dominios que no se ven en vivo en `tabmanager:frame-blocked`.
-- Los datos viven solo en este navegador: borrar los datos del sitio los elimina. La exportación a JSON llega en la fase 5.
+- Los datos viven solo en este navegador: borrar los datos del sitio los elimina. Exporta una copia o activa la sincronización para no perderlos.
 
 ## Temas
 

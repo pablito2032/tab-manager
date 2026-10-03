@@ -93,6 +93,8 @@ const ICON_PATHS = {
   image: 'M4 5h16v14H4zM4 15l4-4 4 4 3-3 5 5M15 9h.01',
   globe: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM3 12h18M12 3c2.5 2.5 3.5 5.5 3.5 9s-1 6.5-3.5 9c-2.5-2.5-3.5-5.5-3.5-9s1-6.5 3.5-9z',
   check: 'M5 12l5 5L20 7',
+  download: 'M12 4v11M7 10l5 5 5-5M5 20h14',
+  upload: 'M12 20V9M7 14l5-5 5 5M5 4h14',
 };
 
 // Componente funcional <AppIcon name="..." /> — decorativo (aria-hidden)
@@ -132,6 +134,28 @@ export function deepClone(value) {
   return typeof structuredClone === 'function'
     ? structuredClone(value)
     : JSON.parse(JSON.stringify(value));
+}
+
+// Fecha y hora legibles en español ("3 oct 2026, 17:05")
+export function formatDateTime(iso) {
+  if (!iso) return '';
+  try {
+    return new Intl.DateTimeFormat('es', { dateStyle: 'medium', timeStyle: 'medium' }).format(new Date(iso));
+  } catch {
+    return iso;
+  }
+}
+
+// Tiempo relativo ("hace 5 minutos")
+export function formatRelative(iso) {
+  if (!iso) return '';
+  const seconds = Math.round((new Date(iso).getTime() - Date.now()) / 1000);
+  const units = [['year', 31536000], ['month', 2592000], ['day', 86400], ['hour', 3600], ['minute', 60]];
+  const rtf = new Intl.RelativeTimeFormat('es', { numeric: 'auto' });
+  for (const [unit, size] of units) {
+    if (Math.abs(seconds) >= size) return rtf.format(Math.round(seconds / size), unit);
+  }
+  return 'ahora mismo';
 }
 
 // Siguiente valor de "order" para añadir un elemento al final de una lista
@@ -640,6 +664,10 @@ export function trapFocus(event, container) {
 //   enfocable.
 // Slots: default (cuerpo), footer.
 // ---------------------------------------------------------------------------
+
+// Pila de modales abiertos: solo el de arriba responde a Escape y al foco
+const modalStack = [];
+
 export const BaseModal = {
   name: 'BaseModal',
   components: { AppIcon },
@@ -659,16 +687,31 @@ export const BaseModal = {
       emit('close');
     }
 
-    function onKeydown(event) {
+    const isTop = () => modalStack[modalStack.length - 1] === titleId;
+
+    // Se escucha en el documento (no solo en el diálogo) para que Escape y
+    // Tab funcionen aunque el foco se haya perdido, p. ej. al deshabilitarse
+    // el botón pulsado mientras termina una operación.
+    function onDocumentKeydown(event) {
+      if (!isTop()) return;
+      const dialog = dialogRef.value;
       if (event.key === 'Escape') {
+        event.preventDefault();
         event.stopPropagation();
         close();
         return;
       }
-      trapFocus(event, dialogRef.value);
+      if (event.key === 'Tab' && dialog && !dialog.contains(document.activeElement)) {
+        event.preventDefault();
+        (getFocusable(dialog)[0] || dialog).focus();
+        return;
+      }
+      trapFocus(event, dialog);
     }
 
     onMounted(async () => {
+      modalStack.push(titleId);
+      document.addEventListener('keydown', onDocumentKeydown, true);
       await nextTick();
       const dialog = dialogRef.value;
       if (!dialog) return;
@@ -677,12 +720,15 @@ export const BaseModal = {
     });
 
     onBeforeUnmount(() => {
+      document.removeEventListener('keydown', onDocumentKeydown, true);
+      const index = modalStack.indexOf(titleId);
+      if (index !== -1) modalStack.splice(index, 1);
       if (previouslyFocused && document.contains(previouslyFocused)) {
         previouslyFocused.focus();
       }
     });
 
-    return { dialogRef, titleId, close, onKeydown };
+    return { dialogRef, titleId, close };
   },
   template: `
     <Teleport to="body">
@@ -698,7 +744,6 @@ export const BaseModal = {
           aria-modal="true"
           :aria-labelledby="titleId"
           tabindex="-1"
-          @keydown="onKeydown"
         >
           <header class="modal__header">
             <h2 :id="titleId" class="modal__title">{{ title }}</h2>

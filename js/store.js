@@ -22,6 +22,22 @@ import {
   saveTitleCache,
   loadFrameBlockedHosts,
   saveFrameBlockedHosts,
+  serializeData,
+  exportFileName,
+  downloadTextFile,
+  parseImportedText,
+  saveBackup,
+  loadBackup,
+  clearBackup,
+  loadSyncSettings,
+  saveSyncSettings,
+  clearSyncSettings,
+  verifyToken,
+  findTabManagerGist,
+  readGist,
+  createGist,
+  updateGist,
+  SyncError,
 } from './storage.js';
 import {
   createId,
@@ -42,6 +58,7 @@ import {
   fetchPageTitle,
   searchTerms,
   foldText,
+  formatDateTime,
 } from './utils.js';
 
 // ===========================================================================
@@ -785,6 +802,292 @@ export const statusCounts = computed(() => {
   }
   return counts;
 });
+
+// ===========================================================================
+// COPIAS DE SEGURIDAD: EXPORTAR / IMPORTAR / DESHACER
+// ===========================================================================
+export const backupInfo = reactive({ at: loadBackup()?.at ?? null, reason: loadBackup()?.reason ?? '' });
+
+const dataSummary = (d) =>
+  `${d.accounts.length} cuenta(s), ${d.categories.length} categoría(s) y ${d.links.length} enlace(s)`;
+
+// Guarda una copia de los datos actuales antes de sustituirlos
+function backupCurrent(reason) {
+  if (data.links.length === 0 && data.accounts.length === 0) return; // nada que perder
+  if (saveBackup(JSON.parse(JSON.stringify(data)), reason)) {
+    backupInfo.at = new Date().toISOString();
+    backupInfo.reason = reason;
+  }
+}
+
+export function exportToFile() {
+  downloadTextFile(serializeData(data), exportFileName());
+  showToast(`Copia exportada: ${dataSummary(data)}`);
+}
+
+// Lee un archivo y devuelve sus datos validados (sin aplicarlos todavía)
+export async function readImportFile(file) {
+  if (file.size > 20 * 1024 * 1024) throw new Error('El archivo es demasiado grande.');
+  const incoming = parseImportedText(await file.text());
+  return { data: incoming, summary: dataSummary(incoming) };
+}
+
+// Combina: añade lo que no existe (por id) y respeta lo que ya hay.
+// Los enlaces cuya URL ya está en la misma categoría tampoco se duplican.
+function mergeInto(incoming) {
+  const accountIds = new Set(data.accounts.map((a) => a.id));
+  const categoryIds = new Set(data.categories.map((c) => c.id));
+  const linkIds = new Set(data.links.map((l) => l.id));
+  const urlsByCategory = new Set(data.links.map((l) => `${l.categoryId} ${l.url}`));
+  let added = 0;
+  for (const account of incoming.accounts) {
+    if (!accountIds.has(account.id)) {
+      data.accounts.push({ ...account, order: nextOrder(data.accounts) });
+      added++;
+    }
+  }
+  for (const category of incoming.categories) {
+    if (!categoryIds.has(category.id)) {
+      const siblings = data.categories.filter((c) => c.accountId === category.accountId);
+      data.categories.push({ ...category, order: nextOrder(siblings) });
+      added++;
+    }
+  }
+  for (const link of incoming.links) {
+    const key = `${link.categoryId} ${link.url}`;
+    if (!linkIds.has(link.id) && !urlsByCategory.has(key)) {
+      data.links.push({ ...link });
+      urlsByCategory.add(key);
+      added++;
+    }
+  }
+  return added;
+}
+
+export function applyImport(incoming, mode) {
+  if (mode === 'replace') {
+    backupCurrent('importación');
+    replaceData({ ...incoming, updatedAt: nowIso() });
+    showToast(`Datos importados: ${dataSummary(incoming)}`);
+  } else {
+    backupCurrent('combinación');
+    const added = mergeInto(incoming);
+    touch();
+    showToast(added ? `Se añadieron ${added} elemento(s) nuevos` : 'No había nada nuevo que añadir');
+  }
+  ui.selection = { type: 'all', id: null };
+}
+
+export async function restoreBackup() {
+  const backup = loadBackup();
+  if (!backup) return;
+  const ok = await confirmAction({
+    title: 'Restaurar copia anterior',
+    message: `Se recuperarán los datos guardados antes de la última ${backup.reason} (${formatDateTime(backup.at)}): ${dataSummary(backup.data)}. Los datos actuales se sustituirán.`,
+    confirmLabel: 'Restaurar',
+  });
+  if (!ok) return;
+  replaceData({ ...backup.data, updatedAt: nowIso() });
+  clearBackup();
+  backupInfo.at = null;
+  showToast('Copia anterior restaurada');
+}
+
+// ===========================================================================
+// SINCRONIZACIÓN CON GITHUB GIST
+// ----------------------------------------------------------------------------
+// Para detectar conflictos se recuerda, tras cada sincronización, la fecha
+// de los datos locales y remotos en ese momento:
+//   - cambios locales  → data.updatedAt ≠ lastLocalUpdatedAt
+//   - cambios remotos  → remote.updatedAt ≠ lastRemoteUpdatedAt
+// Si hay cambios en los dos lados, gana la fecha de modificación más
+// reciente, previa confirmación del usuario.
+// ===========================================================================
+const storedSync = loadSyncSettings();
+
+export const sync = reactive({
+  token: storedSync.token ?? '',
+  login: storedSync.login ?? '',
+  gistId: storedSync.gistId ?? '',
+  gistUrl: storedSync.gistUrl ?? '',
+  lastSyncAt: storedSync.lastSyncAt ?? null,
+  lastLocalUpdatedAt: storedSync.lastLocalUpdatedAt ?? null,
+  lastRemoteUpdatedAt: storedSync.lastRemoteUpdatedAt ?? null,
+  busy: false,   // operación en curso: 'verify' | 'upload' | 'download' | 'sync' | false
+  error: '',
+  message: '',
+});
+
+function persistSync() {
+  const { token, login, gistId, gistUrl, lastSyncAt, lastLocalUpdatedAt, lastRemoteUpdatedAt } = sync;
+  saveSyncSettings({ token, login, gistId, gistUrl, lastSyncAt, lastLocalUpdatedAt, lastRemoteUpdatedAt });
+}
+
+// Sin datos locales (p. ej. un dispositivo nuevo) no hay nada que proteger
+const isLocalEmpty = computed(() => data.accounts.length === 0 && data.links.length === 0);
+export const hasLocalChanges = computed(() => !isLocalEmpty.value && data.updatedAt !== sync.lastLocalUpdatedAt);
+
+// Ejecuta una operación mostrando estado y errores
+async function runSync(kind, task) {
+  if (sync.busy) return;
+  sync.busy = kind;
+  sync.error = '';
+  sync.message = '';
+  try {
+    await task();
+  } catch (error) {
+    sync.error = error instanceof SyncError ? error.message : `Error inesperado: ${error.message}`;
+    // Gist borrado o inaccesible: olvidarlo para crear uno nuevo al subir
+    if (error.status === 404 && sync.gistId) {
+      sync.gistId = '';
+      sync.gistUrl = '';
+      sync.lastRemoteUpdatedAt = null;
+      persistSync();
+    }
+  } finally {
+    sync.busy = false;
+  }
+}
+
+export function connectSync(token) {
+  return runSync('verify', async () => {
+    const clean = token.trim();
+    if (!clean) throw new SyncError('Pega tu token de GitHub.');
+    const { login, hasGistScope } = await verifyToken(clean);
+    if (hasGistScope === false) throw new SyncError('El token es válido pero le falta el permiso "gist".');
+    sync.token = clean;
+    sync.login = login;
+    // Reutilizar el Gist si ya existe (p. ej. creado desde otro dispositivo)
+    const existing = await findTabManagerGist(clean);
+    sync.gistId = existing?.id ?? '';
+    sync.gistUrl = existing?.url ?? '';
+    sync.lastSyncAt = null;
+    sync.lastLocalUpdatedAt = null;
+    sync.lastRemoteUpdatedAt = null;
+    persistSync();
+    sync.message = existing
+      ? `Conectado como ${login}. Se encontró tu Gist de Tab Manager: usa "Descargar" o "Sincronizar".`
+      : `Conectado como ${login}. Pulsa "Subir" para crear tu Gist privado.`;
+  });
+}
+
+export async function disconnectSync() {
+  const ok = await confirmAction({
+    title: 'Olvidar el token',
+    message: 'Se borrará el token de este navegador. Tus datos locales y el Gist en GitHub no se modifican.',
+    confirmLabel: 'Olvidar',
+    danger: true,
+  });
+  if (!ok) return;
+  clearSyncSettings();
+  Object.assign(sync, {
+    token: '', login: '', gistId: '', gistUrl: '', lastSyncAt: null,
+    lastLocalUpdatedAt: null, lastRemoteUpdatedAt: null, error: '', message: '',
+  });
+}
+
+function markSynced(remoteUpdatedAt) {
+  sync.lastSyncAt = nowIso();
+  sync.lastLocalUpdatedAt = data.updatedAt;
+  sync.lastRemoteUpdatedAt = remoteUpdatedAt;
+  persistSync();
+}
+
+async function fetchRemote() {
+  if (!sync.gistId) return null;
+  const { data: remote, url } = await readGist(sync.token, sync.gistId);
+  if (url) sync.gistUrl = url;
+  return remote;
+}
+
+async function pushToGist() {
+  // Asegurar que lo subido es lo último guardado
+  const result = sync.gistId
+    ? await updateGist(sync.token, sync.gistId, data)
+    : await createGist(sync.token, data);
+  sync.gistId = result.id;
+  sync.gistUrl = result.url;
+  markSynced(data.updatedAt);
+  sync.message = `Datos subidos (${dataSummary(data)}).`;
+}
+
+function pullFromRemote(remote) {
+  backupCurrent('descarga desde la nube');
+  replaceData(remote);
+  markSynced(remote.updatedAt);
+  sync.message = `Datos descargados (${dataSummary(remote)}).`;
+}
+
+const remoteChanged = (remote) => remote.updatedAt !== sync.lastRemoteUpdatedAt;
+const isNewer = (a, b) => new Date(a).getTime() > new Date(b).getTime();
+
+// "Subir": la nube pasa a tener los datos de este navegador
+export function syncUpload() {
+  return runSync('upload', async () => {
+    const remote = await fetchRemote();
+    if (remote && remoteChanged(remote) && isNewer(remote.updatedAt, data.updatedAt)) {
+      const ok = await confirmAction({
+        title: 'La nube tiene cambios más recientes',
+        message: `La copia del Gist es del ${formatDateTime(remote.updatedAt)} y la de este navegador del ${formatDateTime(data.updatedAt)}. Si subes, se sobrescribirá (GitHub guarda las versiones anteriores en el historial del Gist).`,
+        confirmLabel: 'Subir igualmente',
+        danger: true,
+      });
+      if (!ok) return;
+    }
+    await pushToGist();
+  });
+}
+
+// "Descargar": este navegador pasa a tener los datos de la nube
+export function syncDownload() {
+  return runSync('download', async () => {
+    const remote = await fetchRemote();
+    if (!remote) throw new SyncError('Todavía no hay datos en la nube. Usa "Subir" primero.');
+    if (hasLocalChanges.value && isNewer(data.updatedAt, remote.updatedAt)) {
+      const ok = await confirmAction({
+        title: 'Tus datos locales son más recientes',
+        message: `Los datos de este navegador son del ${formatDateTime(data.updatedAt)} y los del Gist del ${formatDateTime(remote.updatedAt)}. Si descargas, se sustituirán los locales (se guarda una copia para poder deshacerlo).`,
+        confirmLabel: 'Descargar igualmente',
+        danger: true,
+      });
+      if (!ok) return;
+    }
+    pullFromRemote(remote);
+  });
+}
+
+// "Sincronizar": decide el sentido según qué lado ha cambiado y, si
+// cambiaron los dos, según la fecha de última modificación.
+export function syncNow() {
+  return runSync('sync', async () => {
+    const remote = await fetchRemote();
+    if (!remote) return pushToGist();
+    const localChanged = hasLocalChanges.value;
+    const remoteDiffers = remoteChanged(remote);
+    if (!localChanged && !remoteDiffers) {
+      markSynced(remote.updatedAt);
+      sync.message = 'Todo está sincronizado.';
+      return;
+    }
+    if (localChanged && !remoteDiffers) return pushToGist();
+    if (!localChanged && remoteDiffers) return pullFromRemote(remote);
+
+    // Conflicto: cambios en ambos lados
+    const localWins = isNewer(data.updatedAt, remote.updatedAt);
+    const ok = await confirmAction({
+      title: 'Cambios en los dos lados',
+      message:
+        `Este navegador cambió el ${formatDateTime(data.updatedAt)} y la nube el ${formatDateTime(remote.updatedAt)}. ` +
+        (localWins
+          ? 'La versión más reciente es la de este navegador: se subirá y sobrescribirá la del Gist (queda en su historial).'
+          : 'La versión más reciente es la de la nube: se descargará y sustituirá la local (se guarda una copia para poder deshacerlo).'),
+      confirmLabel: localWins ? 'Subir la mía' : 'Descargar la de la nube',
+    });
+    if (!ok) return;
+    if (localWins) await pushToGist();
+    else pullFromRemote(remote);
+  });
+}
 
 // ===========================================================================
 // ARRANQUE

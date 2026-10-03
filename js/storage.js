@@ -9,6 +9,10 @@
 //   categories: [{ id, accountId, name, color, order }],
 //   links:      [{ id, categoryId, url, title, favicon, note, status, createdAt, order }]
 // }
+//
+// Sincronización: GitHub Gist privado con un único archivo
+// `tab-manager.json` con este mismo formato. El token personal se guarda
+// solo en este navegador (clave `tabmanager:sync`) y nunca se exporta.
 // ============================================================================
 
 import { isValidColor, isValidStatus, DEFAULT_COLOR, DEFAULT_STATUS, faviconUrl, defaultTitle, nowIso } from './utils.js';
@@ -20,6 +24,8 @@ export const DATA_KEY = 'tabmanager:data';
 export const PREFS_KEY = 'tabmanager:prefs';
 export const TITLE_CACHE_KEY = 'tabmanager:title-cache';
 export const FRAME_BLOCKED_KEY = 'tabmanager:frame-blocked';
+export const BACKUP_KEY = 'tabmanager:backup';
+export const SYNC_KEY = 'tabmanager:sync';
 
 // Versión actual del formato de datos
 export const DATA_VERSION = 1;
@@ -222,3 +228,212 @@ export function migrateData(input) {
     links,
   };
 }
+
+// ===========================================================================
+// EXPORTAR / IMPORTAR
+// ===========================================================================
+export const EXPORT_APP_ID = 'tab-manager';
+
+// Serializa los datos para un archivo o el Gist (con metadatos de origen)
+export function serializeData(data) {
+  return JSON.stringify(
+    {
+      app: EXPORT_APP_ID,
+      exportedAt: new Date().toISOString(),
+      version: data.version,
+      updatedAt: data.updatedAt,
+      accounts: data.accounts,
+      categories: data.categories,
+      links: data.links,
+    },
+    null,
+    2,
+  );
+}
+
+// Nombre del archivo de exportación: tab-manager-2026-10-03.json
+export function exportFileName(date = new Date()) {
+  const pad = (n) => String(n).padStart(2, '0');
+  return `tab-manager-${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}.json`;
+}
+
+// Descarga un texto como archivo
+export function downloadTextFile(text, fileName, type = 'application/json') {
+  const blob = new Blob([text], { type });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fileName;
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+// Interpreta el contenido de un archivo importado. Lanza un Error con un
+// mensaje en español si no es válido.
+export function parseImportedText(text) {
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new Error('El archivo no es un JSON válido.');
+  }
+  if (parsed?.app && parsed.app !== EXPORT_APP_ID) {
+    throw new Error('El archivo no parece una copia de Tab Manager.');
+  }
+  return migrateData(parsed);
+}
+
+// ---------------------------------------------------------------------------
+// Copia de seguridad automática antes de reemplazar los datos (importar o
+// descargar de la nube), para poder deshacerlo.
+// ---------------------------------------------------------------------------
+export function saveBackup(data, reason) {
+  const ok = safeSet(BACKUP_KEY, JSON.stringify({ reason, at: new Date().toISOString(), data }));
+  return ok;
+}
+
+export function loadBackup() {
+  const backup = safeParse(safeGet(BACKUP_KEY));
+  if (!backup?.data) return null;
+  try {
+    return { reason: backup.reason, at: backup.at, data: migrateData(backup.data) };
+  } catch {
+    return null;
+  }
+}
+
+export function clearBackup() {
+  safeRemove(BACKUP_KEY);
+}
+
+// ===========================================================================
+// SINCRONIZACIÓN CON GITHUB GIST
+// ===========================================================================
+export const GIST_FILE_NAME = 'tab-manager.json';
+const GIST_DESCRIPTION = 'Tab Manager — datos sincronizados (no editar a mano)';
+const GITHUB_API = 'https://api.github.com';
+
+// Estado local de la sincronización:
+// { token, gistId, gistUrl, lastSyncAt, lastLocalUpdatedAt, lastRemoteUpdatedAt }
+export function loadSyncSettings() {
+  const settings = safeParse(safeGet(SYNC_KEY));
+  return settings && typeof settings === 'object' ? settings : {};
+}
+
+export function saveSyncSettings(settings) {
+  safeSet(SYNC_KEY, JSON.stringify(settings));
+}
+
+export function clearSyncSettings() {
+  safeRemove(SYNC_KEY);
+}
+
+// Error con mensaje para el usuario y el código HTTP (si lo hay)
+export class SyncError extends Error {
+  constructor(message, status = 0) {
+    super(message);
+    this.name = 'SyncError';
+    this.status = status;
+  }
+}
+
+async function githubRequest(token, path, { method = 'GET', body } = {}) {
+  let response;
+  try {
+    response = await fetch(`${GITHUB_API}${path}`, {
+      method,
+      headers: {
+        Accept: 'application/vnd.github+json',
+        Authorization: `Bearer ${token}`,
+        'X-GitHub-Api-Version': '2022-11-28',
+        ...(body ? { 'Content-Type': 'application/json' } : {}),
+      },
+      body: body ? JSON.stringify(body) : undefined,
+      cache: 'no-store',
+    });
+  } catch {
+    throw new SyncError('No se pudo conectar con GitHub. Comprueba tu conexión.');
+  }
+  if (response.ok) return { json: await response.json(), headers: response.headers };
+
+  const status = response.status;
+  if (status === 401) throw new SyncError('El token no es válido o ha caducado.', status);
+  if (status === 403 && response.headers.get('x-ratelimit-remaining') === '0') {
+    throw new SyncError('Se ha superado el límite de peticiones a GitHub. Inténtalo más tarde.', status);
+  }
+  if (status === 403 || status === 404) {
+    // GitHub responde 404 cuando el token no tiene permiso sobre el recurso
+    throw new SyncError(
+      path.startsWith('/gists/')
+        ? 'No se encontró el Gist o el token no tiene permiso "gist".'
+        : 'El token no tiene permiso para usar Gists (necesita el permiso "gist").',
+      status,
+    );
+  }
+  throw new SyncError(`GitHub respondió con un error (${status}).`, status);
+}
+
+// Comprueba el token y devuelve el usuario y si tiene el permiso "gist"
+export async function verifyToken(token) {
+  const { json, headers } = await githubRequest(token, '/user');
+  const scopes = headers.get('x-oauth-scopes'); // solo en tokens clásicos
+  const hasGistScope = scopes === null ? null : scopes.split(',').map((s) => s.trim()).includes('gist');
+  return { login: json.login, hasGistScope };
+}
+
+// Busca un Gist existente de Tab Manager (para un dispositivo nuevo)
+export async function findTabManagerGist(token) {
+  for (let page = 1; page <= 5; page++) {
+    const { json } = await githubRequest(token, `/gists?per_page=100&page=${page}`);
+    const found = json.find((gist) => gist.files && gist.files[GIST_FILE_NAME]);
+    if (found) return { id: found.id, url: found.html_url };
+    if (json.length < 100) break;
+  }
+  return null;
+}
+
+// Lee los datos del Gist. Devuelve { data, updatedAt, url } o data = null si está vacío.
+export async function readGist(token, gistId) {
+  const { json } = await githubRequest(token, `/gists/${encodeURIComponent(gistId)}`);
+  const file = json.files?.[GIST_FILE_NAME];
+  if (!file) return { data: null, url: json.html_url };
+  let content = file.content;
+  // Los archivos de más de ~1 MB llegan truncados: leer el contenido completo
+  if (file.truncated && file.raw_url) {
+    try {
+      content = await (await fetch(file.raw_url, { cache: 'no-store' })).text();
+    } catch {
+      throw new SyncError('No se pudo descargar el archivo completo del Gist.');
+    }
+  }
+  try {
+    return { data: parseImportedText(content), url: json.html_url };
+  } catch (error) {
+    throw new SyncError(`El contenido del Gist no es válido: ${error.message}`);
+  }
+}
+
+// Crea un Gist privado con los datos
+export async function createGist(token, data) {
+  const { json } = await githubRequest(token, '/gists', {
+    method: 'POST',
+    body: {
+      description: GIST_DESCRIPTION,
+      public: false,
+      files: { [GIST_FILE_NAME]: { content: serializeData(data) } },
+    },
+  });
+  return { id: json.id, url: json.html_url };
+}
+
+// Sobrescribe el archivo del Gist (GitHub conserva el historial de revisiones)
+export async function updateGist(token, gistId, data) {
+  const { json } = await githubRequest(token, `/gists/${encodeURIComponent(gistId)}`, {
+    method: 'PATCH',
+    body: { files: { [GIST_FILE_NAME]: { content: serializeData(data) } } },
+  });
+  return { id: json.id, url: json.html_url };
+}
+

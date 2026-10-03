@@ -153,6 +153,14 @@ export default {
     onBeforeUnmount(() => clearTimeout(frameTimer));
 
     const reasonText = computed(() => SUMMARY_REASONS[summaryReason.value] ?? '');
+
+    // Webs protegidas por verificaciones anti-bots (Cloudflare…): el servicio
+    // de capturas también las ve, así que la captura muestra la verificación
+    const isBotChallenge = computed(() =>
+      /just a moment|attention required|verify(ing)? you are (a )?human|checking your browser|un momento|security check|ddos protection/i.test(
+        meta.value?.title ?? '',
+      ),
+    );
     const displayDescription = computed(() => meta.value?.description || props.link.note || '');
 
     return {
@@ -167,6 +175,7 @@ export default {
       frameLoaded,
       summaryReason,
       reasonText,
+      isBotChallenge,
       meta,
       metaState,
       shotState,
@@ -304,8 +313,12 @@ export default {
               >
               {{ [meta.publisher, meta.author].filter(Boolean).join(' · ') }}
             </p>
-            <h3 class="preview-card__title">{{ meta?.title || link.title }}</h3>
+            <h3 class="preview-card__title">{{ (!isBotChallenge && meta?.title) || link.title }}</h3>
             <p v-if="metaState === 'loading'" class="preview-card__desc preview-card__desc--muted">Buscando información de la página…</p>
+            <p v-else-if="isBotChallenge" class="preview-card__desc preview-card__desc--muted">
+              Esta web protege su contenido con una verificación anti-bots, así que los servicios externos
+              no pueden leerla. Ábrela en una pestaña nueva para verla.
+            </p>
             <p v-else-if="displayDescription" class="preview-card__desc">{{ displayDescription }}</p>
             <p v-else-if="metaState === 'unavailable' && !isPrivate" class="preview-card__desc preview-card__desc--muted">
               Las páginas de resultados de búsqueda no se pueden previsualizar.
@@ -333,7 +346,9 @@ export default {
             @error="shotState = 'error'"
           >
           <p v-if="shotState === 'error'" class="preview-shot__error">No se pudo generar la captura.</p>
-          <figcaption class="preview-shot__caption">Captura generada por thum.io</figcaption>
+          <figcaption class="preview-shot__caption">
+            <template v-if="isBotChallenge">La captura puede mostrar la verificación anti-bots en lugar de la página. · </template>Captura generada por thum.io
+          </figcaption>
         </figure>
       </div>
 
