@@ -11,13 +11,14 @@
 // }
 // ============================================================================
 
-import { isValidColor, isValidStatus, DEFAULT_COLOR, DEFAULT_STATUS, faviconUrl, getDomain, nowIso } from './utils.js';
+import { isValidColor, isValidStatus, DEFAULT_COLOR, DEFAULT_STATUS, faviconUrl, defaultTitle, nowIso } from './utils.js';
 
 // Claves de localStorage. THEME_KEY debe coincidir con el script en línea
 // de index.html que aplica el tema antes de pintar la página.
 export const THEME_KEY = 'tabmanager:theme';
 export const DATA_KEY = 'tabmanager:data';
 export const PREFS_KEY = 'tabmanager:prefs';
+export const TITLE_CACHE_KEY = 'tabmanager:title-cache';
 
 // Versión actual del formato de datos
 export const DATA_VERSION = 1;
@@ -88,6 +89,26 @@ export function loadPrefs() {
 
 export function savePrefs(prefs) {
   safeSet(PREFS_KEY, JSON.stringify(prefs));
+}
+
+// ---------------------------------------------------------------------------
+// Caché de títulos obtenidos de servicios externos: { url: { title, at } }
+// Se limita a las entradas más recientes para no crecer sin fin.
+// ---------------------------------------------------------------------------
+const TITLE_CACHE_LIMIT = 1000;
+
+export function loadTitleCache() {
+  const cache = safeParse(safeGet(TITLE_CACHE_KEY));
+  return cache && typeof cache === 'object' ? cache : {};
+}
+
+export function saveTitleCache(cache) {
+  const entries = Object.entries(cache);
+  if (entries.length > TITLE_CACHE_LIMIT) {
+    entries.sort((a, b) => b[1].at - a[1].at);
+    for (const [url] of entries.slice(TITLE_CACHE_LIMIT)) delete cache[url];
+  }
+  safeSet(TITLE_CACHE_KEY, JSON.stringify(cache));
 }
 
 // ---------------------------------------------------------------------------
@@ -172,7 +193,7 @@ export function migrateData(input) {
       id: l.id,
       categoryId: l.categoryId,
       url: l.url,
-      title: str(l.title).trim() || getDomain(l.url) || l.url,
+      title: str(l.title).trim() || defaultTitle(l.url),
       favicon: str(l.favicon) || faviconUrl(l.url),
       note: str(l.note),
       status: isValidStatus(l.status) ? l.status : DEFAULT_STATUS,

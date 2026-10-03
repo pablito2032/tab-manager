@@ -87,6 +87,9 @@ const ICON_PATHS = {
   list: 'M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01',
   layers: 'M12 3l9 5-9 5-9-5zM3 13l9 5 9-5',
   tabs: 'M4 8h16v11a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1zM4 8V5a1 1 0 0 1 1-1h5l2 4',
+  grip: 'M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01',
+  refresh: 'M20 11a8 8 0 0 0-14.3-4.9L4 8M4 4v4h4M4 13a8 8 0 0 0 14.3 4.9L20 16M20 20v-4h-4',
+  filter: 'M4 5h16l-6 8v6l-4-1v-5z',
 };
 
 // Componente funcional <AppIcon name="..." /> — decorativo (aria-hidden)
@@ -195,6 +198,270 @@ export function parseUrlList(text) {
     }
   }
   return { valid, invalid };
+}
+
+// ---------------------------------------------------------------------------
+// Títulos a partir de la URL (sin red)
+// Muchas URLs ya contienen lo importante: el término de una búsqueda, el
+// repositorio de GitHub, el artículo de Wikipedia… Se usa como título por
+// defecto antes de recurrir al dominio.
+// ---------------------------------------------------------------------------
+
+// Buscadores: host (sin www) → [nombre, parámetro de la consulta]
+const SEARCH_ENGINES = [
+  [/^google\.[a-z.]+$/, 'Google', 'q', /^\/search/],
+  [/^bing\.com$/, 'Bing', 'q', /^\/search/],
+  [/^duckduckgo\.com$/, 'DuckDuckGo', 'q', /^\/$/],
+  [/^search\.brave\.com$/, 'Brave Search', 'q', /^\/(search|images|videos|news)/],
+  [/^(search\.)?yahoo\.com$/, 'Yahoo', 'p', /^\/search/],
+  [/^ecosia\.org$/, 'Ecosia', 'q', /^\/search/],
+  [/^(m\.)?youtube\.com$/, 'YouTube', 'search_query', /^\/results/],
+  [/^github\.com$/, 'GitHub', 'q', /^\/search/],
+  [/^amazon\.[a-z.]+$/, 'Amazon', 'k', /^\/s/],
+  [/^[a-z]{2,3}\.wikipedia\.org$/, 'Wikipedia', 'search', /^\/w\/index\.php/],
+];
+
+// Servicios privados: su título real requiere iniciar sesión, así que
+// ningún servicio externo puede leerlo. Se describe el tipo de documento.
+const PRIVATE_PAGES = [
+  [/^drive\.google\.com$/, /^\/drive\/(u\/\d+\/)?folders\//, 'Carpeta de Google Drive'],
+  [/^drive\.google\.com$/, /^\/file\//, 'Archivo de Google Drive'],
+  [/^drive\.google\.com$/, /./, 'Google Drive'],
+  [/^docs\.google\.com$/, /^\/document\//, 'Documento de Google'],
+  [/^docs\.google\.com$/, /^\/spreadsheets\//, 'Hoja de cálculo de Google'],
+  [/^docs\.google\.com$/, /^\/presentation\//, 'Presentación de Google'],
+  [/^docs\.google\.com$/, /^\/forms\//, 'Formulario de Google'],
+  [/^colab\.research\.google\.com$/, /^\/drive\//, 'Cuaderno de Colab'],
+  [/^colab\.research\.google\.com$/, /^\/github\//, null], // se trata como GitHub más abajo
+  [/^mail\.google\.com$/, /./, 'Gmail'],
+  [/^calendar\.google\.com$/, /./, 'Google Calendar'],
+];
+
+const GITHUB_SECTIONS = { issues: 'Issue', pull: 'Pull request', discussions: 'Discusión' };
+
+function decodeSegment(segment) {
+  try {
+    return decodeURIComponent(segment.replace(/\+/g, ' '));
+  } catch {
+    return segment;
+  }
+}
+
+// Convierte "mi-articulo_genial.html" en "Mi articulo genial"
+function humanizeSlug(segment) {
+  const text = decodeSegment(segment)
+    .replace(/\.(html?|php|aspx?|jsp)$/i, '')
+    .replace(/[-_][a-f\d]{8,}$/i, '') // sufijo de identificador (p. ej. Medium)
+    .replace(/[-_+]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return text ? text.charAt(0).toUpperCase() + text.slice(1) : '';
+}
+
+// Segmentos de ruta genéricos que no sirven como título
+const GENERIC_SEGMENTS = new Set(['watch', 'index', 'home', 'default', 'main', 'view', 'edit', 'page', 'search', 'results']);
+
+// ¿Parece un identificador (hash, número…) y no un texto legible?
+function looksLikeId(segment) {
+  return (
+    GENERIC_SEGMENTS.has(segment.toLowerCase()) ||
+    /^[\d]+$/.test(segment) ||
+    /^[a-f\d]{12,}$/i.test(segment) ||
+    (segment.length > 16 && !/[-_ ]/.test(segment) && /\d/.test(segment)) ||
+    !/[a-záéíóúñü]{3,}/i.test(decodeSegment(segment))
+  );
+}
+
+function githubTitle(parts) {
+  const [owner, repo, section, ...rest] = parts;
+  if (!owner) return null;
+  if (!repo) return owner;
+  const base = `${owner}/${repo}`;
+  if (GITHUB_SECTIONS[section] && rest[0]) return `${GITHUB_SECTIONS[section]} #${rest[0]} · ${base}`;
+  if ((section === 'blob' || section === 'tree') && rest.length > 1) return `${rest.slice(1).join('/')} · ${base}`;
+  if (section === 'wiki' && rest[0]) return `${humanizeSlug(rest[0])} · ${base} (wiki)`;
+  return base;
+}
+
+// Devuelve un título deducido de la URL o null si no hay nada mejor que el dominio
+export function titleFromUrl(url) {
+  let u;
+  try {
+    u = new URL(url);
+  } catch {
+    return null;
+  }
+  const host = u.hostname.replace(/^www\./, '');
+  const path = u.pathname;
+  const parts = path.split('/').filter(Boolean);
+
+  // Búsquedas: mostrar qué se buscó
+  for (const [hostRe, name, param, pathRe] of SEARCH_ENGINES) {
+    if (hostRe.test(host) && pathRe.test(path)) {
+      const query = u.searchParams.get(param)?.trim();
+      if (query) return `"${query}" · ${name}`;
+    }
+  }
+
+  // Documentos privados
+  for (const [hostRe, pathRe, label] of PRIVATE_PAGES) {
+    if (hostRe.test(host) && pathRe.test(path)) {
+      if (label === null) return `${githubTitle(parts.slice(1))} · Colab`;
+      return label;
+    }
+  }
+
+  // Vídeos: el título real llega después desde noembed
+  if (/^((m|music)\.)?youtube\.com$/.test(host) && /^\/(watch|shorts|live)/.test(path)) return 'Vídeo de YouTube';
+  if (host === 'youtu.be' && parts[0]) return 'Vídeo de YouTube';
+
+  if (host === 'github.com') return githubTitle(parts);
+  if (host === 'gist.github.com' && parts[0]) return `Gist de ${parts[0]}`;
+
+  // Wikipedia: /wiki/Nombre_del_artículo
+  if (/(^|\.)wikipedia\.org$/.test(host) && parts[0] === 'wiki' && parts[1]) {
+    return `${decodeSegment(parts[1]).replace(/_/g, ' ')} · Wikipedia`;
+  }
+
+  // Reddit: /r/sub/comments/id/titulo_del_post
+  if (/(^|\.)reddit\.com$/.test(host) && parts[0] === 'r' && parts[1]) {
+    if (parts[2] === 'comments' && parts[4]) return `${humanizeSlug(parts[4])} · r/${parts[1]}`;
+    return `r/${parts[1]}`;
+  }
+
+  // Caso general: último segmento legible de la ruta ("/blog/mi-articulo")
+  const slug = [...parts].reverse().find((segment) => !looksLikeId(segment));
+  if (slug && parts.length > 0) {
+    const text = humanizeSlug(slug);
+    if (text.length >= 4) return `${text} · ${host}`;
+  }
+  return null;
+}
+
+// Título por defecto de un enlace: deducido de la URL o, si no, el dominio
+export function defaultTitle(url) {
+  return titleFromUrl(url) || getDomain(url) || url;
+}
+
+// ¿El título es uno generado automáticamente (y por tanto reemplazable)?
+export function isAutoTitle(title, url) {
+  return !title || title === url || title === getDomain(url) || title === titleFromUrl(url);
+}
+
+// ---------------------------------------------------------------------------
+// Título real de la página mediante servicios de metadatos con CORS
+// (gratuitos y sin clave):
+//   - noembed.com  → vídeos (YouTube, Vimeo…) vía oEmbed
+//   - microlink.io → cualquier página pública (límite gratuito diario)
+// ---------------------------------------------------------------------------
+const VIDEO_HOSTS = /^((m|music)\.)?youtube\.com$|^youtu\.be$|^vimeo\.com$/;
+
+// Títulos que indican que no se pudo leer la página real
+const USELESS_TITLES = [
+  /^(sign in|log ?in|iniciar sesión|acceder)\b/i,
+  /^(access denied|forbidden|not found|404|403|error)\b/i,
+  /^just a moment/i,
+  /^attention required/i,
+  /^(youtube|google|github|brave search|google drive|vídeo de youtube)$/i,
+];
+
+// ¿Merece la pena consultar el título a un servicio externo?
+export function canFetchTitle(url) {
+  let u;
+  try {
+    u = new URL(url);
+  } catch {
+    return false;
+  }
+  const host = u.hostname.replace(/^www\./, '');
+  if (host === 'localhost' || /^(\d+\.){3}\d+$/.test(host) || /\.(local|internal|lan)$/.test(host)) return false;
+  if (PRIVATE_PAGES.some(([hostRe, pathRe]) => hostRe.test(host) && pathRe.test(u.pathname))) return false;
+  // Las búsquedas ya tienen un buen título deducido de la URL
+  if (SEARCH_ENGINES.some(([hostRe, , , pathRe]) => hostRe.test(host) && pathRe.test(u.pathname))) return false;
+  return true;
+}
+
+function cleanTitle(title, url) {
+  const text = String(title ?? '').replace(/\s+/g, ' ').trim();
+  if (!text || text.length > 300) return null;
+  if (text.toLowerCase() === getDomain(url).toLowerCase()) return null;
+  if (USELESS_TITLES.some((re) => re.test(text))) return null;
+  return text;
+}
+
+async function fetchJson(endpoint, timeoutMs) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(endpoint, { signal: controller.signal, headers: { Accept: 'application/json' } });
+    if (!response.ok) return null;
+    return await response.json();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Devuelve el título real de la página o null si no se pudo obtener
+export async function fetchPageTitle(url, { timeoutMs = 8000 } = {}) {
+  if (!canFetchTitle(url)) return null;
+  const host = getDomain(url);
+  try {
+    if (VIDEO_HOSTS.test(host)) {
+      const oembed = await fetchJson(`https://noembed.com/embed?url=${encodeURIComponent(url)}`, timeoutMs);
+      const title = cleanTitle(oembed?.title, url);
+      if (title) return title;
+    }
+    const meta = await fetchJson(`https://api.microlink.io/?url=${encodeURIComponent(url)}`, timeoutMs);
+    return meta?.status === 'success' ? cleanTitle(meta.data?.title, url) : null;
+  } catch {
+    return null; // sin red, tiempo agotado, CORS…
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Búsqueda: normalización sin acentos ni mayúsculas y resaltado
+// ---------------------------------------------------------------------------
+function foldChar(char) {
+  return char.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
+}
+
+export function foldText(text) {
+  return String(text ?? '').normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
+}
+
+// Divide la búsqueda en términos (todos deben aparecer)
+export function searchTerms(query) {
+  return foldText(query).split(/\s+/).filter(Boolean);
+}
+
+// Divide un texto en trozos marcando los que coinciden con algún término.
+// Devuelve [{ text, match }] para pintarlo con <mark> sin usar v-html.
+export function highlightParts(text, terms) {
+  const source = String(text ?? '');
+  if (!terms?.length || !source) return [{ text: source, match: false }];
+  // Texto plegado y mapa de posiciones plegadas → originales
+  let folded = '';
+  const map = [];
+  for (let i = 0; i < source.length; i++) {
+    const f = foldChar(source[i]);
+    for (let j = 0; j < f.length; j++) map.push(i);
+    folded += f;
+  }
+  const marks = new Array(source.length).fill(false);
+  for (const term of terms) {
+    let from = folded.indexOf(term);
+    while (from !== -1) {
+      for (let k = from; k < from + term.length; k++) marks[map[k]] = true;
+      from = folded.indexOf(term, from + term.length);
+    }
+  }
+  const parts = [];
+  for (let i = 0; i < source.length; i++) {
+    const last = parts[parts.length - 1];
+    if (last && last.match === marks[i]) last.text += source[i];
+    else parts.push({ text: source[i], match: marks[i] });
+  }
+  return parts;
 }
 
 // ---------------------------------------------------------------------------

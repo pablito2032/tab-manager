@@ -4,7 +4,7 @@ Gestor web personal de enlaces pendientes: sustituye el hábito de tener decenas
 
 Sitio 100 % estático: HTML, CSS y JavaScript (módulos ES) con **Vue 3** y **SortableJS** cargados desde CDN. Sin Node.js, sin npm y sin paso de compilación.
 
-> **Estado:** fase 2 de 6 (modelo de datos, CRUD y guardado local).
+> **Estado:** fase 3 de 6 (búsqueda, filtros y drag & drop).
 
 ## Ejecutar en local
 
@@ -53,6 +53,21 @@ assets/icons/       Iconos y favicon
 3. Añade enlaces con **Nuevo enlace**, o pega una lista de URLs (una por línea) con **Añadir varios**. El favicon se obtiene automáticamente y, si no escribes título, se usa el dominio.
 4. Cambia el estado de cada enlace (Pendiente / Visto / Guardado) desde su etiqueta, y usa **Abrir todos** para abrir una categoría entera.
 
+5. **Busca** desde la cabecera (atajo `/`): busca en todas las cuentas por título, URL o nota, sin distinguir mayúsculas ni acentos. `Esc` limpia la búsqueda.
+6. **Filtra** por estado con los botones Todos / Pendientes / Vistos / Guardados.
+7. **Reordena o mueve** enlaces arrastrándolos por su asa (⋮⋮): dentro de una categoría, a otra categoría de la vista o soltándolos sobre una categoría de la barra lateral. Con el teclado: enfoca el asa y usa las flechas ↑/↓.
+8. **Atajos:** `/` buscar · `N` nuevo enlace · `Esc` cerrar diálogos.
+
+### Títulos de los enlaces
+
+Una web estática no puede leer el HTML de otras páginas (CORS), así que el título se obtiene así:
+
+1. **A partir de la URL, al instante y sin red:** búsquedas de Google, Bing, DuckDuckGo, Brave, YouTube, GitHub o Amazon muestran lo buscado (`"cómo hacer pan" · Google`); GitHub muestra `usuario/repo`, issues y PRs; Wikipedia y Reddit, el artículo o el post; en otras webs se usa la parte legible de la ruta.
+2. **Título real de la página**, en segundo plano, mediante servicios públicos sin clave: [noembed.com](https://noembed.com) para vídeos (YouTube, Vimeo) y [microlink.io](https://microlink.io) para el resto (con límite gratuito diario; los resultados se guardan en caché).
+3. **Páginas privadas** (Google Drive, Docs, Colab, Gmail): su nombre solo es visible con tu sesión iniciada, así que se muestra el tipo ("Cuaderno de Colab") y puedes escribir el título tú.
+
+Solo se sustituyen los títulos automáticos: si escribes uno propio, se respeta. La consulta externa se puede desactivar en **Ajustes → Títulos de las páginas**.
+
 > **Abrir todos:** muchos navegadores solo dejan abrir una pestaña por clic. Si se bloquean las demás, permite las ventanas emergentes para este sitio (icono en la barra de direcciones) y vuelve a pulsar.
 
 ## Datos y almacenamiento
@@ -76,6 +91,7 @@ Todo se guarda automáticamente en `localStorage` del navegador (clave `tabmanag
 - `status` admite `pending` (pendiente), `seen` (visto) y `saved` (guardado).
 - El campo `version` permite migrar el formato en el futuro (`migrateData` en `js/storage.js`); al cargar se validan los datos y se descartan registros huérfanos o inválidos.
 - Si tienes la app abierta en varias pestañas, los cambios se sincronizan entre ellas.
+- Los títulos obtenidos de servicios externos se guardan en caché (`tabmanager:title-cache`) para no repetir consultas.
 - Los datos viven solo en este navegador: borrar los datos del sitio los elimina. La exportación a JSON llega en la fase 5.
 
 ## Temas

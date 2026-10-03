@@ -6,7 +6,7 @@
 // - Al editar solo se muestra el modo individual.
 // ============================================================================
 
-import { ref, reactive, computed } from 'vue';
+import { ref, reactive, computed, watch, onBeforeUnmount } from 'vue';
 import {
   sortedAccounts,
   categoriesByAccount,
@@ -17,6 +17,8 @@ import {
   createLinks,
   updateLink,
   showToast,
+  lookupTitle,
+  ui,
 } from '../store.js';
 import {
   AppIcon,
@@ -24,7 +26,8 @@ import {
   LINK_STATUSES,
   DEFAULT_STATUS,
   normalizeUrl,
-  getDomain,
+  defaultTitle,
+  canFetchTitle,
   faviconUrl,
   parseUrlList,
 } from '../utils.js';
@@ -77,8 +80,47 @@ export default {
     function onUrlInput() {
       errors.url = '';
       faviconFailed.value = false;
-      if (!titleTouched.value) form.title = normalizedUrl.value ? getDomain(normalizedUrl.value) : '';
+      titleStatus.value = 'idle';
+      if (!titleTouched.value) form.title = normalizedUrl.value ? defaultTitle(normalizedUrl.value) : '';
     }
+
+    // ---- Título real de la página ----
+    // 'idle' | 'loading' | 'done' | 'error' | 'private'
+    const titleStatus = ref('idle');
+    const canLookup = computed(() => Boolean(normalizedUrl.value && canFetchTitle(normalizedUrl.value)));
+    let lookupId = 0;
+    let lookupTimer = null;
+
+    async function fetchTitle({ force = false } = {}) {
+      const url = normalizedUrl.value;
+      if (!url) return;
+      if (!canFetchTitle(url)) {
+        if (force) titleStatus.value = 'private';
+        return;
+      }
+      const id = ++lookupId;
+      titleStatus.value = 'loading';
+      const title = await lookupTitle(url);
+      if (id !== lookupId || url !== normalizedUrl.value) return; // la URL cambió entretanto
+      if (!title) {
+        titleStatus.value = 'error';
+        return;
+      }
+      titleStatus.value = 'done';
+      // Automático: solo si el usuario no ha escrito un título. Manual: siempre.
+      if (force || !titleTouched.value) {
+        form.title = title;
+        if (force) titleTouched.value = true;
+      }
+    }
+
+    // Al crear, se consulta solo tras una pausa al escribir la URL
+    watch(normalizedUrl, (url) => {
+      clearTimeout(lookupTimer);
+      if (link || !url || !ui.autoTitles || titleTouched.value) return;
+      lookupTimer = setTimeout(() => fetchTitle(), 600);
+    });
+    onBeforeUnmount(() => clearTimeout(lookupTimer));
 
     // Al salir del campo, mostrar la URL normalizada (con https://)
     function onUrlBlur() {
@@ -153,6 +195,9 @@ export default {
       hasCategories,
       previewFavicon,
       faviconFailed,
+      titleStatus,
+      canLookup,
+      fetchTitle,
       duplicate,
       duplicateCategory,
       parsedBulk,
@@ -236,15 +281,35 @@ export default {
 
           <div class="field">
             <label class="field__label" for="link-title">Título</label>
-            <input
-              id="link-title"
-              v-model="form.title"
-              class="input"
-              type="text"
-              maxlength="200"
-              placeholder="Se usará el dominio si lo dejas vacío"
-              @input="onTitleInput"
-            >
+            <div class="input-group">
+              <input
+                id="link-title"
+                v-model="form.title"
+                class="input"
+                type="text"
+                maxlength="200"
+                placeholder="Se deducirá de la URL si lo dejas vacío"
+                aria-describedby="link-title-status"
+                @input="onTitleInput"
+              >
+              <button
+                type="button"
+                class="icon-btn"
+                :class="{ 'is-spinning': titleStatus === 'loading' }"
+                :disabled="!canLookup || titleStatus === 'loading'"
+                aria-label="Obtener el título de la página"
+                title="Obtener el título de la página"
+                @click="fetchTitle({ force: true })"
+              >
+                <AppIcon name="refresh" size="sm" />
+              </button>
+            </div>
+            <p id="link-title-status" class="field__hint" aria-live="polite">
+              <template v-if="titleStatus === 'loading'">Buscando el título de la página…</template>
+              <template v-else-if="titleStatus === 'done'">Título obtenido de la página.</template>
+              <template v-else-if="titleStatus === 'error'">No se pudo obtener el título; puedes escribirlo tú.</template>
+              <template v-else-if="titleStatus === 'private'">Es una página privada: su título solo se ve con tu sesión iniciada.</template>
+            </p>
           </div>
         </template>
 

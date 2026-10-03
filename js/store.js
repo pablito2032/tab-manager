@@ -18,6 +18,8 @@ import {
   saveThemePreference,
   loadPrefs,
   savePrefs,
+  loadTitleCache,
+  saveTitleCache,
 } from './storage.js';
 import {
   createId,
@@ -31,6 +33,13 @@ import {
   isValidStatus,
   nextColor,
   DEFAULT_STATUS,
+  defaultTitle,
+  isAutoTitle,
+  titleFromUrl,
+  canFetchTitle,
+  fetchPageTitle,
+  searchTerms,
+  foldText,
 } from './utils.js';
 
 // ===========================================================================
@@ -230,7 +239,7 @@ function buildLink({ categoryId, url, title = '', note = '', status = DEFAULT_ST
     id: createId('lnk'),
     categoryId,
     url,
-    title: title.trim() || getDomain(url) || url,
+    title: title.trim() || defaultTitle(url),
     favicon: faviconUrl(url),
     note: note.trim(),
     status: isValidStatus(status) ? status : DEFAULT_STATUS,
@@ -247,6 +256,7 @@ export function createLink({ categoryId, url, title, note, status }) {
   const link = buildLink({ categoryId, url: normalized, title, note, status }, nextOrder(siblings));
   data.links.push(link);
   touch();
+  requestTitles([link]);
   return link;
 }
 
@@ -258,6 +268,7 @@ export function createLinks(urls, { categoryId, status = DEFAULT_STATUS }) {
   let order = nextOrder(linksByCategory.value.get(categoryId) ?? []);
   let added = 0;
   let skipped = 0;
+  const newLinks = [];
   for (const raw of urls) {
     const url = normalizeUrl(raw);
     if (!url || existing.has(url)) {
@@ -265,10 +276,13 @@ export function createLinks(urls, { categoryId, status = DEFAULT_STATUS }) {
       continue;
     }
     existing.add(url);
-    data.links.push(buildLink({ categoryId, url, status }, order++));
+    const link = buildLink({ categoryId, url, status }, order++);
+    data.links.push(link);
+    newLinks.push(link);
     added++;
   }
   if (added > 0) touch();
+  requestTitles(newLinks);
   return { added, skipped };
 }
 
@@ -283,7 +297,7 @@ export function updateLink(id, { url, title, note, status, categoryId }) {
       link.favicon = faviconUrl(normalized);
     }
   }
-  if (title !== undefined) link.title = title.trim() || getDomain(link.url) || link.url;
+  if (title !== undefined) link.title = title.trim() || defaultTitle(link.url);
   if (note !== undefined) link.note = note.trim();
   if (status !== undefined && isValidStatus(status)) link.status = status;
   // Mover a otra categoría: se coloca al final
@@ -302,6 +316,126 @@ export function setLinkStatus(id, status) {
 export function deleteLink(id) {
   data.links = data.links.filter((l) => l.id !== id);
   touch();
+}
+
+// Mueve un enlace a una categoría (la misma u otra) y lo coloca antes de
+// `beforeId` o después de `afterId`; sin ninguno de los dos, al final.
+// Se usa al arrastrar y soltar (los vecinos son los enlaces visibles, así
+// funciona aunque haya filtros activos) y al reordenar con el teclado.
+export function moveLink(linkId, categoryId, { beforeId = null, afterId = null } = {}) {
+  const link = findLink(linkId);
+  if (!link || !findCategory(categoryId)) return false;
+  const list = (linksByCategory.value.get(categoryId) ?? []).filter((l) => l.id !== linkId);
+  let index = list.length;
+  if (beforeId) {
+    const i = list.findIndex((l) => l.id === beforeId);
+    if (i !== -1) index = i;
+  } else if (afterId) {
+    const i = list.findIndex((l) => l.id === afterId);
+    if (i !== -1) index = i + 1;
+  }
+  list.splice(index, 0, link);
+  link.categoryId = categoryId;
+  list.forEach((l, i) => (l.order = i));
+  touch();
+  return true;
+}
+
+// Sube (-1) o baja (+1) un enlace una posición entre los visibles
+export function moveLinkBy(linkId, delta) {
+  const link = findLink(linkId);
+  if (!link) return false;
+  const visible = visibleLinksByCategory.value.get(link.categoryId) ?? [];
+  const index = visible.findIndex((l) => l.id === linkId);
+  const neighbor = visible[index + delta];
+  if (index === -1 || !neighbor) return false;
+  return delta < 0
+    ? moveLink(linkId, link.categoryId, { beforeId: neighbor.id })
+    : moveLink(linkId, link.categoryId, { afterId: neighbor.id });
+}
+
+// ---- Títulos reales de las páginas (en segundo plano) ----
+// Los enlaces con título automático (dominio o deducido de la URL) piden su
+// título real a un servicio de metadatos. Los resultados, también los
+// fallidos, se guardan en caché para no repetir consultas: los servicios
+// gratuitos tienen límite diario.
+const TITLE_CONCURRENCY = 2;
+const TITLE_RETRY_MS = 7 * 24 * 60 * 60 * 1000; // reintentar fallos tras 7 días
+const titleCache = loadTitleCache();
+const titleQueue = [];
+let titleActive = 0;
+
+export const fetchingTitles = reactive(new Set()); // ids en curso (para la interfaz)
+
+function applyFetchedTitle(linkId, url, title) {
+  const link = findLink(linkId);
+  // Solo si sigue siendo el mismo enlace y el usuario no ha puesto su título
+  if (title && link && link.url === url && isAutoTitle(link.title, link.url)) {
+    updateLink(linkId, { title });
+  }
+}
+
+function pumpTitleQueue() {
+  while (titleActive < TITLE_CONCURRENCY && titleQueue.length > 0) {
+    const linkId = titleQueue.shift();
+    const link = findLink(linkId);
+    if (!link) continue;
+    const url = link.url;
+    titleActive++;
+    fetchingTitles.add(linkId);
+    fetchPageTitle(url)
+      .then((title) => {
+        titleCache[url] = { title, at: Date.now() };
+        saveTitleCache(titleCache);
+        applyFetchedTitle(linkId, url, title);
+      })
+      .finally(() => {
+        titleActive--;
+        fetchingTitles.delete(linkId);
+        pumpTitleQueue();
+      });
+  }
+}
+
+export function requestTitles(links) {
+  if (!ui.autoTitles) return;
+  for (const link of links) {
+    if (!isAutoTitle(link.title, link.url) || !canFetchTitle(link.url)) continue;
+    if (titleQueue.includes(link.id) || fetchingTitles.has(link.id)) continue;
+    const cached = titleCache[link.url];
+    if (cached?.title) {
+      applyFetchedTitle(link.id, link.url, cached.title);
+      continue;
+    }
+    if (cached && Date.now() - cached.at < TITLE_RETRY_MS) continue;
+    titleQueue.push(link.id);
+  }
+  pumpTitleQueue();
+}
+
+// Consulta manual (botón del formulario): ignora la caché de fallos
+export async function lookupTitle(url) {
+  const title = await fetchPageTitle(url);
+  if (title) {
+    titleCache[url] = { title, at: Date.now() };
+    saveTitleCache(titleCache);
+  }
+  return title;
+}
+
+// Al arrancar: los enlaces creados antes de esta versión tienen el dominio
+// como título; se sustituye por el deducido de la URL si es mejor.
+function upgradeLegacyTitles() {
+  let changed = false;
+  for (const link of data.links) {
+    if (link.title !== getDomain(link.url)) continue;
+    const better = titleFromUrl(link.url);
+    if (better && better !== link.title) {
+      link.title = better;
+      changed = true;
+    }
+  }
+  if (changed) touch();
 }
 
 // Abre varias URLs en pestañas nuevas. El navegador puede bloquear todas
@@ -350,6 +484,10 @@ export const ui = reactive({
   theme: loadThemePreference(),     // 'system' | 'light' | 'dark'
   systemPrefersDark: darkQuery.matches,
   viewMode: prefs.viewMode === 'list' ? 'list' : 'grid',
+  search: '',                       // búsqueda global (no se guarda)
+  statusFilter: isValidStatus(prefs.statusFilter) ? prefs.statusFilter : 'all',
+  autoTitles: prefs.autoTitles !== false, // obtener títulos reales de las páginas
+  draggingLinkId: null,             // enlace que se está arrastrando
   // Qué se muestra en la zona principal: todo, una cuenta o una categoría
   selection: prefs.selection ?? { type: 'all', id: null },
   sidebarOpen: false,               // cajón lateral en móvil
@@ -361,6 +499,7 @@ export const ui = reactive({
   linkForm: null,                   // { linkId?, categoryId?, bulk? }
   confirm: null,                    // { title, message, confirmLabel, danger, resolve }
   toast: null,                      // { id, message, kind }
+  announcement: '',                 // texto para lectores de pantalla
 });
 
 // ---- Tema ----
@@ -398,7 +537,12 @@ export function toggleTheme() {
 
 // ---- Preferencias persistentes ----
 watch(
-  () => ({ viewMode: ui.viewMode, selection: ui.selection }),
+  () => ({
+    viewMode: ui.viewMode,
+    selection: ui.selection,
+    statusFilter: ui.statusFilter,
+    autoTitles: ui.autoTitles,
+  }),
   (value) => savePrefs(value),
   { deep: true },
 );
@@ -407,10 +551,59 @@ export function setViewMode(mode) {
   ui.viewMode = mode === 'list' ? 'list' : 'grid';
 }
 
+export function setStatusFilter(status) {
+  ui.statusFilter = isValidStatus(status) ? status : 'all';
+}
+
+export function setAutoTitles(enabled) {
+  ui.autoTitles = enabled;
+  if (enabled) requestTitles(data.links);
+}
+
 // ---- Selección ----
+// Elegir algo en la barra lateral limpia la búsqueda para ver su contenido
 export function select(type, id = null) {
   ui.selection = { type, id };
+  ui.search = '';
   ui.sidebarOpen = false;
+}
+
+// ---- Búsqueda y filtros ----
+export const activeTerms = computed(() => searchTerms(ui.search));
+export const isSearching = computed(() => activeTerms.value.length > 0);
+export const isFiltering = computed(() => isSearching.value || ui.statusFilter !== 'all');
+
+// Texto plegado (sin acentos ni mayúsculas) de cada enlace para buscar rápido
+const searchIndex = computed(() => {
+  const map = new Map();
+  for (const link of data.links) map.set(link.id, foldText(`${link.title} ${link.url} ${link.note}`));
+  return map;
+});
+
+function matchesSearch(link) {
+  const terms = activeTerms.value;
+  if (terms.length === 0) return true;
+  const haystack = searchIndex.value.get(link.id) ?? '';
+  return terms.every((term) => haystack.includes(term));
+}
+
+function matchesStatus(link) {
+  return ui.statusFilter === 'all' || link.status === ui.statusFilter;
+}
+
+// Map<categoryId, enlace[]> con búsqueda y filtro de estado aplicados
+export const visibleLinksByCategory = computed(() => {
+  if (!isFiltering.value) return linksByCategory.value;
+  const map = new Map();
+  for (const [id, list] of linksByCategory.value) {
+    map.set(id, list.filter((link) => matchesStatus(link) && matchesSearch(link)));
+  }
+  return map;
+});
+
+export function clearFilters() {
+  ui.search = '';
+  ui.statusFilter = 'all';
 }
 
 // Si se elimina lo seleccionado, volver a "Todos"
@@ -441,6 +634,16 @@ export const defaultCategoryId = computed(() => {
 
 // Lo que muestra la zona principal: título y categorías visibles
 export const currentView = computed(() => {
+  // Con búsqueda activa se busca en todas las cuentas y categorías
+  if (isSearching.value) {
+    return {
+      type: 'search',
+      title: 'Resultados de búsqueda',
+      subtitle: `Buscando "${ui.search.trim()}" en todas las cuentas`,
+      account: null,
+      categories: allCategoriesSorted.value,
+    };
+  }
   const { type, id } = ui.selection;
   if (type === 'category') {
     const category = findCategory(id);
@@ -520,7 +723,33 @@ export function showToast(message, kind = 'info') {
   toastTimer = setTimeout(() => (ui.toast = null), kind === 'error' ? 6000 : 3500);
 }
 
+// Anuncio solo para lectores de pantalla (región aria-live oculta)
+export function announce(message) {
+  ui.announcement = '';
+  setTimeout(() => (ui.announcement = message), 50);
+}
+
 export function dismissToast() {
   clearTimeout(toastTimer);
   ui.toast = null;
 }
+
+// Recuento por estado en la vista actual (respeta la búsqueda, no el filtro
+// de estado, para que los botones del filtro muestren cuántos hay de cada uno)
+export const statusCounts = computed(() => {
+  const counts = { all: 0, pending: 0, seen: 0, saved: 0 };
+  for (const category of currentView.value.categories) {
+    for (const link of linksByCategory.value.get(category.id) ?? []) {
+      if (!matchesSearch(link)) continue;
+      counts.all++;
+      counts[link.status]++;
+    }
+  }
+  return counts;
+});
+
+// ===========================================================================
+// ARRANQUE
+// ===========================================================================
+upgradeLegacyTitles();
+requestTitles(data.links.slice(0, 40)); // límite por sesión para cuidar la cuota gratuita

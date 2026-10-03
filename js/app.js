@@ -2,7 +2,7 @@
 // app.js — Crea y monta la aplicación de Vue
 // ============================================================================
 
-import { createApp, computed } from 'vue';
+import { createApp, computed, ref, onMounted, onBeforeUnmount } from 'vue';
 import {
   ui,
   effectiveTheme,
@@ -12,6 +12,8 @@ import {
   findLink,
   resolveConfirm,
   dismissToast,
+  openLinkForm,
+  isSearching,
 } from './store.js';
 import { AppIcon, BaseModal } from './utils.js';
 import Sidebar from './components/Sidebar.js';
@@ -32,8 +34,45 @@ const App = {
     // Enlace en vista previa (la vista previa se implementa en la fase 4)
     const previewLink = computed(() => (ui.previewLinkId ? findLink(ui.previewLinkId) : null));
 
+    // ---- Atajos de teclado ----
+    //   /  → enfocar el buscador
+    //   N  → nuevo enlace
+    //   Esc (en el buscador) → limpiar la búsqueda
+    const searchInput = ref(null);
+
+    const isTypingTarget = (el) =>
+      el && (el.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName));
+    const anyModalOpen = () =>
+      Boolean(ui.linkForm || ui.accountForm || ui.categoryForm || ui.settingsOpen || ui.confirm);
+
+    function onGlobalKeydown(event) {
+      if (event.ctrlKey || event.metaKey || event.altKey) return;
+      if (isTypingTarget(event.target) || anyModalOpen()) return;
+      if (event.key === '/') {
+        event.preventDefault();
+        searchInput.value?.focus();
+        searchInput.value?.select();
+      } else if (event.key === 'n' || event.key === 'N') {
+        event.preventDefault();
+        openLinkForm();
+      }
+    }
+
+    function onSearchKeydown(event) {
+      if (event.key === 'Escape' && ui.search) {
+        event.preventDefault();
+        ui.search = '';
+      }
+    }
+
+    onMounted(() => document.addEventListener('keydown', onGlobalKeydown));
+    onBeforeUnmount(() => document.removeEventListener('keydown', onGlobalKeydown));
+
     return {
       ui,
+      searchInput,
+      isSearching,
+      onSearchKeydown,
       effectiveTheme,
       themeToggleLabel,
       previewLink,
@@ -68,12 +107,19 @@ const App = {
           <label for="global-search" class="visually-hidden">Buscar enlaces</label>
           <input
             id="global-search"
+            ref="searchInput"
+            v-model="ui.search"
             class="input"
             type="search"
             placeholder="Buscar enlaces…"
-            title="Busca por título, URL o nota"
+            title="Busca por título, URL o nota (atajo: /)"
             autocomplete="off"
+            spellcheck="false"
+            aria-keyshortcuts="/"
+            aria-controls="main-content"
+            @keydown="onSearchKeydown"
           >
+          <kbd v-if="!ui.search" class="kbd search-field__kbd" aria-hidden="true">/</kbd>
         </div>
 
         <div class="app-header__actions">
@@ -135,6 +181,9 @@ const App = {
           >{{ ui.confirm.confirmLabel }}</button>
         </template>
       </BaseModal>
+
+      <!-- Anuncios solo para lectores de pantalla -->
+      <div class="visually-hidden" aria-live="polite">{{ ui.announcement }}</div>
 
       <!-- Avisos breves -->
       <div class="toast-region" aria-live="polite" aria-atomic="true">

@@ -27,6 +27,8 @@ import {
   openCategoryForm,
   confirmAction,
   showToast,
+  findLink,
+  moveLink,
 } from '../store.js';
 import { AppIcon, BaseModal, PASTEL_COLORS, nextColor } from '../utils.js';
 
@@ -291,6 +293,32 @@ export default {
     );
 
     const isSelected = (type, id = null) => ui.selection.type === type && ui.selection.id === id;
+
+    // ---- Soltar enlaces sobre una categoría de la barra lateral ----
+    const dropTargetId = ref(null);
+
+    function canDropOn(categoryId) {
+      const link = ui.draggingLinkId ? findLink(ui.draggingLinkId) : null;
+      return Boolean(link && link.categoryId !== categoryId);
+    }
+
+    function onDragOver(event, category) {
+      if (!canDropOn(category.id)) return;
+      event.preventDefault(); // permite soltar aquí
+      event.dataTransfer.dropEffect = 'move';
+      dropTargetId.value = category.id;
+    }
+
+    function onDragLeave(category) {
+      if (dropTargetId.value === category.id) dropTargetId.value = null;
+    }
+
+    function onDrop(event, category) {
+      dropTargetId.value = null;
+      if (!canDropOn(category.id)) return;
+      event.preventDefault();
+      if (moveLink(ui.draggingLinkId, category.id)) showToast(`Movido a "${category.name}"`);
+    }
     const pendingLabel = (count) => (count === 1 ? '1 pendiente' : `${count} pendientes`);
 
     return {
@@ -304,6 +332,10 @@ export default {
       totalPending: computed(() => totalPending.value),
       isSelected,
       pendingLabel,
+      dropTargetId,
+      onDragOver,
+      onDragLeave,
+      onDrop,
       select,
       openAccountForm,
       openCategoryForm,
@@ -395,8 +427,12 @@ export default {
                   <button
                     type="button"
                     class="nav-item"
+                    :class="{ 'is-drop-target': dropTargetId === category.id }"
                     :aria-current="isSelected('category', category.id) ? 'true' : undefined"
                     @click="select('category', category.id)"
+                    @dragover="onDragOver($event, category)"
+                    @dragleave="onDragLeave(category)"
+                    @drop="onDrop($event, category)"
                   >
                     <span class="color-dot"></span>
                     <span class="nav-item__label">{{ category.name }}</span>

@@ -4,7 +4,7 @@
 // ============================================================================
 
 import { ref } from 'vue';
-import { ui, setTheme } from '../store.js';
+import { ui, setTheme, setAutoTitles } from '../store.js';
 import { AppIcon, BaseModal, THEME_OPTIONS } from '../utils.js';
 
 export default {
@@ -25,7 +25,7 @@ export default {
       themeOptionRefs.value[nextIndex]?.focus();
     }
 
-    return { ui, setTheme, themeOptions: THEME_OPTIONS, themeOptionRefs, onThemeKeydown };
+    return { ui, setTheme, setAutoTitles, themeOptions: THEME_OPTIONS, themeOptionRefs, onThemeKeydown };
   },
   template: `
     <BaseModal title="Ajustes" @close="$emit('close')">
@@ -55,6 +55,27 @@ export default {
               {{ option.label }}
             </button>
           </div>
+        </section>
+
+        <section class="settings-group" aria-labelledby="settings-titles-title">
+          <h3 id="settings-titles-title" class="settings-group__title">Títulos de las páginas</h3>
+          <label class="switch">
+            <input
+              type="checkbox"
+              class="switch__input"
+              :checked="ui.autoTitles"
+              aria-describedby="settings-titles-desc"
+              @change="setAutoTitles($event.target.checked)"
+            >
+            <span class="switch__track" aria-hidden="true"></span>
+            <span class="switch__label">Obtener automáticamente el título real</span>
+          </label>
+          <p id="settings-titles-desc" class="settings-group__desc">
+            Para mostrar el nombre del vídeo o del artículo en lugar del dominio, la URL se consulta a
+            servicios públicos de metadatos (noembed.com para vídeos, microlink.io para el resto).
+            Las búsquedas y los documentos privados (Drive, Docs, Colab) se resuelven a partir
+            de la propia URL, sin enviarla a nadie.
+          </p>
         </section>
 
         <section class="settings-group" aria-labelledby="settings-data-title">

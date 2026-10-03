@@ -1102,3 +1102,232 @@ nav > .sidebar-section {
   color: #ffffff;
   background: #b42318;
 }
+
+/* ==========================================================================
+   Fase 3 — Barra de herramientas, filtros y búsqueda
+   ========================================================================== */
+.toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin: calc(var(--space-2) * -1) 0 var(--space-6);
+}
+
+/* El filtro se desplaza en horizontal si no cabe (móvil) */
+.segmented--scroll {
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.segmented--scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.segmented--scroll .segmented__option {
+  white-space: nowrap;
+}
+
+.segmented__count {
+  min-width: 20px;
+  padding: 0 var(--space-1);
+  font-size: var(--text-xs);
+  text-align: center;
+  color: var(--color-text-subtle);
+  background: var(--color-surface-2);
+  border-radius: var(--radius-full);
+}
+
+.segmented__option[aria-pressed="true"] .segmented__count {
+  color: var(--color-accent);
+  background: var(--color-accent-soft);
+}
+
+/* Coincidencias de la búsqueda */
+mark {
+  padding: 0 1px;
+  color: inherit;
+  background: color-mix(in srgb, var(--cat-yellow-dot) 45%, transparent);
+  border-radius: 3px;
+}
+
+.link-item__fetching {
+  font-style: italic;
+  color: var(--color-text-subtle);
+}
+
+/* Campo con botón pegado a la derecha */
+.input-group {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.input-group .input {
+  flex: 1;
+  min-width: 0;
+}
+
+.input-group .icon-btn {
+  border: 1px solid var(--color-border-strong);
+}
+
+.is-spinning .icon {
+  animation: spin 900ms linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Interruptor (checkbox con aspecto de switch) */
+.switch {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.switch__input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+}
+
+.switch__track {
+  position: relative;
+  flex-shrink: 0;
+  width: 40px;
+  height: 24px;
+  background: var(--color-border-strong);
+  border-radius: var(--radius-full);
+  transition: background-color var(--duration) var(--ease);
+}
+
+.switch__track::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 18px;
+  height: 18px;
+  background: #ffffff;
+  border-radius: 50%;
+  box-shadow: var(--shadow-sm);
+  transition: transform var(--duration) var(--ease);
+}
+
+.switch__input:checked + .switch__track {
+  background: var(--color-accent);
+}
+
+.switch__input:checked + .switch__track::after {
+  transform: translateX(16px);
+}
+
+.switch__input:focus-visible + .switch__track {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+/* ==========================================================================
+   Fase 3 — Arrastrar y soltar
+   ========================================================================== */
+.link-item {
+  position: relative;
+}
+
+/* Asa de arrastre: esquina superior derecha en tarjetas */
+.link-item__drag {
+  position: absolute;
+  top: var(--space-2);
+  right: var(--space-2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  color: var(--color-text-subtle);
+  border-radius: var(--radius-sm);
+  cursor: grab;
+  touch-action: none;
+}
+
+.link-item__drag:hover {
+  color: var(--color-text);
+  background: var(--color-surface-hover);
+}
+
+.link-item__drag:active {
+  cursor: grabbing;
+}
+
+.link-item__body {
+  padding-right: var(--space-6);
+}
+
+@media (hover: hover) {
+  .link-item__drag {
+    opacity: 0;
+    transition: opacity var(--duration-fast) var(--ease);
+  }
+
+  .link-item:hover .link-item__drag,
+  .link-item:focus-within .link-item__drag {
+    opacity: 1;
+  }
+}
+
+/* En lista, el asa pasa a ser la primera columna */
+.link-grid--list .link-item {
+  grid-template-columns: 24px 32px minmax(0, 1fr) auto;
+  grid-template-areas: "drag favicon body footer";
+  padding-left: var(--space-2);
+}
+
+.link-grid--list .link-item__drag {
+  position: static;
+  grid-area: drag;
+}
+
+.link-grid--list .link-item__body {
+  padding-right: 0;
+}
+
+/* Hueco donde caerá el elemento */
+.is-ghost .link-item {
+  background: var(--color-accent-soft);
+  border: 1.5px dashed var(--color-accent);
+  box-shadow: none;
+}
+
+.is-ghost .link-item > * {
+  visibility: hidden;
+}
+
+/* Elemento que sigue al cursor */
+.is-dragging-item .link-item {
+  box-shadow: var(--shadow-lg);
+  transform: rotate(1deg);
+}
+
+/* Listas vacías: invisibles normalmente, zona de destino al arrastrar */
+.link-grid--empty {
+  min-height: 0;
+}
+
+.link-groups.is-dragging .link-grid--empty {
+  min-height: 72px;
+  border: 1.5px dashed var(--color-border-strong);
+  border-radius: var(--radius-lg);
+}
+
+/* Categoría de la barra lateral sobre la que se va a soltar */
+.nav-item.is-drop-target {
+  color: var(--cat-text);
+  background: var(--cat-bg);
+  box-shadow: inset 0 0 0 2px var(--cat-dot);
+}
