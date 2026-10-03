@@ -4,7 +4,7 @@ Gestor web personal de enlaces pendientes: sustituye el hábito de tener decenas
 
 Sitio 100 % estático: HTML, CSS y JavaScript (módulos ES) con **Vue 3** y **SortableJS** cargados desde CDN. Sin Node.js, sin npm y sin paso de compilación.
 
-> **Estado:** fase 1 de 6 (estructura, HTML base y sistema de temas).
+> **Estado:** fase 2 de 6 (modelo de datos, CRUD y guardado local).
 
 ## Ejecutar en local
 
@@ -45,6 +45,38 @@ js/utils.js         Utilidades, paleta, iconos
 js/components/      Componentes Vue como objetos JS con template en string
 assets/icons/       Iconos y favicon
 ```
+
+## Uso básico
+
+1. Crea una **cuenta** (p. ej. "Personal") con el botón `+` de la barra lateral, o pulsa **Cargar datos de ejemplo** para probar.
+2. Dentro de la cuenta, crea **categorías** (funcionan como grupos de pestañas).
+3. Añade enlaces con **Nuevo enlace**, o pega una lista de URLs (una por línea) con **Añadir varios**. El favicon se obtiene automáticamente y, si no escribes título, se usa el dominio.
+4. Cambia el estado de cada enlace (Pendiente / Visto / Guardado) desde su etiqueta, y usa **Abrir todos** para abrir una categoría entera.
+
+> **Abrir todos:** muchos navegadores solo dejan abrir una pestaña por clic. Si se bloquean las demás, permite las ventanas emergentes para este sitio (icono en la barra de direcciones) y vuelve a pulsar.
+
+## Datos y almacenamiento
+
+Todo se guarda automáticamente en `localStorage` del navegador (clave `tabmanager:data`) como un único objeto JSON:
+
+```json
+{
+  "version": 1,
+  "updatedAt": "2026-10-03T12:00:00.000Z",
+  "accounts":   [{ "id": "acc_…", "name": "Personal", "email": "", "color": "sky", "order": 0 }],
+  "categories": [{ "id": "cat_…", "accountId": "acc_…", "name": "Para leer", "color": "mint", "order": 0 }],
+  "links": [{
+    "id": "lnk_…", "categoryId": "cat_…", "url": "https://…", "title": "…",
+    "favicon": "https://www.google.com/s2/favicons?domain=…&sz=64",
+    "note": "", "status": "pending", "createdAt": "…", "order": 0
+  }]
+}
+```
+
+- `status` admite `pending` (pendiente), `seen` (visto) y `saved` (guardado).
+- El campo `version` permite migrar el formato en el futuro (`migrateData` en `js/storage.js`); al cargar se validan los datos y se descartan registros huérfanos o inválidos.
+- Si tienes la app abierta en varias pestañas, los cambios se sincronizan entre ellas.
+- Los datos viven solo en este navegador: borrar los datos del sitio los elimina. La exportación a JSON llega en la fase 5.
 
 ## Temas
 

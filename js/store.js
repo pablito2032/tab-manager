@@ -1,39 +1,381 @@
 // ============================================================================
-// store.js — Estado reactivo global
-// En la fase 1 solo contiene el estado de interfaz (tema, paneles abiertos).
-// Los datos (cuentas, categorías, enlaces) y su CRUD llegan en la fase 2.
+// store.js — Estado reactivo global y operaciones CRUD
+// ----------------------------------------------------------------------------
+// - `data`: cuentas, categorías y enlaces (lo que se guarda).
+// - `ui`: estado de interfaz (tema, selección, modales abiertos…).
+// Todas las modificaciones de `data` deben pasar por las funciones de este
+// módulo: cada una llama a `touch()`, que actualiza `updatedAt` y programa
+// el guardado automático en localStorage.
 // ============================================================================
 
-import { reactive, computed, watchEffect } from 'vue';
-import { loadThemePreference, saveThemePreference } from './storage.js';
+import { reactive, computed, watch, watchEffect } from 'vue';
+import {
+  DATA_KEY,
+  loadData,
+  saveData,
+  createEmptyData,
+  loadThemePreference,
+  saveThemePreference,
+  loadPrefs,
+  savePrefs,
+} from './storage.js';
+import {
+  createId,
+  nowIso,
+  nextOrder,
+  byOrder,
+  normalizeUrl,
+  getDomain,
+  faviconUrl,
+  isValidColor,
+  isValidStatus,
+  nextColor,
+  DEFAULT_STATUS,
+} from './utils.js';
 
-// Media query del sistema para el modo oscuro
+// ===========================================================================
+// DATOS
+// ===========================================================================
+export const data = reactive(loadData() ?? createEmptyData());
+
+// ---- Guardado automático (con retardo para agrupar cambios seguidos) ----
+const SAVE_DELAY = 300;
+let saveTimer = null;
+let dirty = false;           // hay cambios sin guardar
+let saveErrorShown = false;  // evita repetir el aviso de error
+
+function flushSave() {
+  clearTimeout(saveTimer);
+  saveTimer = null;
+  if (!dirty) return;
+  dirty = false;
+  const ok = saveData(data);
+  if (!ok && !saveErrorShown) {
+    saveErrorShown = true;
+    showToast('No se pudieron guardar los cambios en este navegador. Exporta una copia de seguridad.', 'error');
+  } else if (ok) {
+    saveErrorShown = false;
+  }
+}
+
+function scheduleSave() {
+  dirty = true;
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(flushSave, SAVE_DELAY);
+}
+
+// Marca los datos como modificados y programa el guardado
+function touch() {
+  data.updatedAt = nowIso();
+  scheduleSave();
+}
+
+// No perder el último cambio si se cierra la pestaña antes del retardo
+window.addEventListener('pagehide', flushSave);
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') flushSave();
+});
+
+// Sustituye todos los datos (otra pestaña, importación, sincronización…)
+export function replaceData(newData, { persist = true } = {}) {
+  data.version = newData.version;
+  data.updatedAt = newData.updatedAt;
+  data.accounts = newData.accounts;
+  data.categories = newData.categories;
+  data.links = newData.links;
+  if (persist) scheduleSave();
+}
+
+// Si los datos cambian en otra pestaña, recargarlos aquí
+window.addEventListener('storage', (event) => {
+  if (event.key !== DATA_KEY) return;
+  const incoming = loadData();
+  if (!incoming || incoming.updatedAt === data.updatedAt) return;
+  // Gana la versión de la otra pestaña: descartar el guardado pendiente
+  clearTimeout(saveTimer);
+  dirty = false;
+  replaceData(incoming, { persist: false });
+});
+
+// ---- Consultas derivadas ----
+export const sortedAccounts = computed(() => byOrder(data.accounts));
+
+// Map<accountId, categoría[]> ordenadas
+export const categoriesByAccount = computed(() => {
+  const map = new Map(data.accounts.map((a) => [a.id, []]));
+  for (const category of data.categories) map.get(category.accountId)?.push(category);
+  for (const [id, list] of map) map.set(id, byOrder(list));
+  return map;
+});
+
+// Map<categoryId, enlace[]> ordenados
+export const linksByCategory = computed(() => {
+  const map = new Map(data.categories.map((c) => [c.id, []]));
+  for (const link of data.links) map.get(link.categoryId)?.push(link);
+  for (const [id, list] of map) map.set(id, byOrder(list));
+  return map;
+});
+
+// Todas las categorías, agrupadas por el orden de su cuenta
+export const allCategoriesSorted = computed(() =>
+  sortedAccounts.value.flatMap((account) => categoriesByAccount.value.get(account.id) ?? []),
+);
+
+// Contadores de pendientes
+export const pendingByCategory = computed(() => {
+  const map = new Map();
+  for (const link of data.links) {
+    if (link.status === 'pending') map.set(link.categoryId, (map.get(link.categoryId) ?? 0) + 1);
+  }
+  return map;
+});
+
+export const pendingByAccount = computed(() => {
+  const map = new Map();
+  for (const category of data.categories) {
+    const count = pendingByCategory.value.get(category.id) ?? 0;
+    map.set(category.accountId, (map.get(category.accountId) ?? 0) + count);
+  }
+  return map;
+});
+
+export const totalPending = computed(() => data.links.filter((l) => l.status === 'pending').length);
+
+export const findAccount = (id) => data.accounts.find((a) => a.id === id) ?? null;
+export const findCategory = (id) => data.categories.find((c) => c.id === id) ?? null;
+export const findLink = (id) => data.links.find((l) => l.id === id) ?? null;
+
+// ---- Cuentas ----
+export function createAccount({ name, email = '', color }) {
+  const account = {
+    id: createId('acc'),
+    name: name.trim(),
+    email: email.trim(),
+    color: isValidColor(color) ? color : nextColor(data.accounts.length),
+    order: nextOrder(data.accounts),
+  };
+  data.accounts.push(account);
+  touch();
+  return account;
+}
+
+export function updateAccount(id, { name, email, color }) {
+  const account = findAccount(id);
+  if (!account) return;
+  if (name !== undefined) account.name = name.trim();
+  if (email !== undefined) account.email = email.trim();
+  if (color !== undefined && isValidColor(color)) account.color = color;
+  touch();
+}
+
+// Elimina la cuenta con todas sus categorías y enlaces
+export function deleteAccount(id) {
+  const categoryIds = new Set(data.categories.filter((c) => c.accountId === id).map((c) => c.id));
+  data.links = data.links.filter((l) => !categoryIds.has(l.categoryId));
+  data.categories = data.categories.filter((c) => c.accountId !== id);
+  data.accounts = data.accounts.filter((a) => a.id !== id);
+  touch();
+}
+
+// ---- Categorías ----
+export function createCategory({ accountId, name, color }) {
+  const siblings = data.categories.filter((c) => c.accountId === accountId);
+  const category = {
+    id: createId('cat'),
+    accountId,
+    name: name.trim(),
+    color: isValidColor(color) ? color : nextColor(data.categories.length),
+    order: nextOrder(siblings),
+  };
+  data.categories.push(category);
+  touch();
+  return category;
+}
+
+export function updateCategory(id, { name, color, accountId }) {
+  const category = findCategory(id);
+  if (!category) return;
+  if (name !== undefined) category.name = name.trim();
+  if (color !== undefined && isValidColor(color)) category.color = color;
+  // Mover a otra cuenta: se coloca al final de sus categorías
+  if (accountId !== undefined && accountId !== category.accountId && findAccount(accountId)) {
+    category.order = nextOrder(data.categories.filter((c) => c.accountId === accountId));
+    category.accountId = accountId;
+  }
+  touch();
+}
+
+// Elimina la categoría con todos sus enlaces
+export function deleteCategory(id) {
+  data.links = data.links.filter((l) => l.categoryId !== id);
+  data.categories = data.categories.filter((c) => c.id !== id);
+  touch();
+}
+
+// ---- Enlaces ----
+
+// Busca un enlace con la misma URL (opcionalmente dentro de una categoría)
+export function findDuplicateLink(url, { categoryId = null, excludeId = null } = {}) {
+  const normalized = normalizeUrl(url);
+  if (!normalized) return null;
+  return (
+    data.links.find(
+      (l) => l.url === normalized && l.id !== excludeId && (categoryId === null || l.categoryId === categoryId),
+    ) ?? null
+  );
+}
+
+function buildLink({ categoryId, url, title = '', note = '', status = DEFAULT_STATUS }, order) {
+  return {
+    id: createId('lnk'),
+    categoryId,
+    url,
+    title: title.trim() || getDomain(url) || url,
+    favicon: faviconUrl(url),
+    note: note.trim(),
+    status: isValidStatus(status) ? status : DEFAULT_STATUS,
+    createdAt: nowIso(),
+    order,
+  };
+}
+
+// Crea un enlace. Devuelve null si la URL no es válida.
+export function createLink({ categoryId, url, title, note, status }) {
+  const normalized = normalizeUrl(url);
+  if (!normalized || !findCategory(categoryId)) return null;
+  const siblings = linksByCategory.value.get(categoryId) ?? [];
+  const link = buildLink({ categoryId, url: normalized, title, note, status }, nextOrder(siblings));
+  data.links.push(link);
+  touch();
+  return link;
+}
+
+// Carga masiva: añade varias URLs a una categoría. Omite las que ya
+// existen en esa categoría. Devuelve cuántas se añadieron y omitieron.
+export function createLinks(urls, { categoryId, status = DEFAULT_STATUS }) {
+  if (!findCategory(categoryId)) return { added: 0, skipped: urls.length };
+  const existing = new Set((linksByCategory.value.get(categoryId) ?? []).map((l) => l.url));
+  let order = nextOrder(linksByCategory.value.get(categoryId) ?? []);
+  let added = 0;
+  let skipped = 0;
+  for (const raw of urls) {
+    const url = normalizeUrl(raw);
+    if (!url || existing.has(url)) {
+      skipped++;
+      continue;
+    }
+    existing.add(url);
+    data.links.push(buildLink({ categoryId, url, status }, order++));
+    added++;
+  }
+  if (added > 0) touch();
+  return { added, skipped };
+}
+
+export function updateLink(id, { url, title, note, status, categoryId }) {
+  const link = findLink(id);
+  if (!link) return false;
+  if (url !== undefined) {
+    const normalized = normalizeUrl(url);
+    if (!normalized) return false;
+    if (normalized !== link.url) {
+      link.url = normalized;
+      link.favicon = faviconUrl(normalized);
+    }
+  }
+  if (title !== undefined) link.title = title.trim() || getDomain(link.url) || link.url;
+  if (note !== undefined) link.note = note.trim();
+  if (status !== undefined && isValidStatus(status)) link.status = status;
+  // Mover a otra categoría: se coloca al final
+  if (categoryId !== undefined && categoryId !== link.categoryId && findCategory(categoryId)) {
+    link.order = nextOrder(linksByCategory.value.get(categoryId) ?? []);
+    link.categoryId = categoryId;
+  }
+  touch();
+  return true;
+}
+
+export function setLinkStatus(id, status) {
+  updateLink(id, { status });
+}
+
+export function deleteLink(id) {
+  data.links = data.links.filter((l) => l.id !== id);
+  touch();
+}
+
+// Abre varias URLs en pestañas nuevas. El navegador puede bloquear todas
+// menos la primera si no se permiten ventanas emergentes para este sitio.
+export function openLinks(links) {
+  let blocked = 0;
+  for (const link of links) {
+    const win = window.open(link.url, '_blank');
+    if (win) {
+      win.opener = null; // equivalente a rel="noopener"
+    } else {
+      blocked++;
+    }
+  }
+  return { opened: links.length - blocked, blocked };
+}
+
+// ---- Datos de ejemplo (para probar la app desde cero) ----
+export function loadSampleData() {
+  const personal = createAccount({ name: 'Personal', email: '', color: 'sky' });
+  const work = createAccount({ name: 'Trabajo', color: 'lavender' });
+  const reading = createCategory({ accountId: personal.id, name: 'Para leer', color: 'mint' });
+  const videos = createCategory({ accountId: personal.id, name: 'Vídeos', color: 'peach' });
+  const docs = createCategory({ accountId: work.id, name: 'Documentación', color: 'periwinkle' });
+  createLinks(['https://developer.mozilla.org/es/', 'https://web.dev/learn/css'], { categoryId: reading.id });
+  createLinks(['https://www.youtube.com/'], { categoryId: videos.id });
+  createLinks(['https://vuejs.org/guide/introduction.html', 'https://sortablejs.github.io/Sortable/'], {
+    categoryId: docs.id,
+  });
+  createLink({
+    categoryId: docs.id,
+    url: 'https://docs.github.com/es/pages',
+    title: 'GitHub Pages',
+    note: 'Para publicar Tab Manager',
+    status: 'saved',
+  });
+}
+
+// ===========================================================================
+// INTERFAZ
+// ===========================================================================
 const darkQuery = window.matchMedia('(prefers-color-scheme: dark)');
+const prefs = loadPrefs();
 
-// ---------------------------------------------------------------------------
-// Estado de interfaz
-// ---------------------------------------------------------------------------
 export const ui = reactive({
   theme: loadThemePreference(),     // 'system' | 'light' | 'dark'
   systemPrefersDark: darkQuery.matches,
+  viewMode: prefs.viewMode === 'list' ? 'list' : 'grid',
+  // Qué se muestra en la zona principal: todo, una cuenta o una categoría
+  selection: prefs.selection ?? { type: 'all', id: null },
   sidebarOpen: false,               // cajón lateral en móvil
   settingsOpen: false,              // modal de ajustes
   previewLinkId: null,              // enlace mostrado en la vista previa
+  // Modales de formularios (null = cerrado)
+  accountForm: null,                // { accountId? }
+  categoryForm: null,               // { categoryId?, accountId? }
+  linkForm: null,                   // { linkId?, categoryId?, bulk? }
+  confirm: null,                    // { title, message, confirmLabel, danger, resolve }
+  toast: null,                      // { id, message, kind }
 });
 
+// ---- Tema ----
 // Tema realmente aplicado ('light' | 'dark') tras resolver 'system'
 export const effectiveTheme = computed(() => {
   if (ui.theme === 'system') return ui.systemPrefersDark ? 'dark' : 'light';
   return ui.theme;
 });
 
-// Seguir los cambios de preferencia del sistema en vivo
 darkQuery.addEventListener('change', (event) => {
   ui.systemPrefersDark = event.matches;
 });
 
-// Aplicar el tema al <html> y recordarlo cada vez que cambie.
-// En modo 'system' se elimina el atributo y manda la media query del CSS.
+// Aplicar el tema al <html> y recordarlo. En 'system' se elimina el
+// atributo y manda la media query del CSS.
 watchEffect(() => {
   const root = document.documentElement;
   if (ui.theme === 'system') {
@@ -44,24 +386,141 @@ watchEffect(() => {
   saveThemePreference(ui.theme);
 });
 
-// ---------------------------------------------------------------------------
-// Acciones de interfaz
-// ---------------------------------------------------------------------------
 export function setTheme(theme) {
   ui.theme = theme;
 }
 
-// Botón rápido de la cabecera: alterna entre claro y oscuro respecto al
-// tema visible y fija esa elección. Para volver a seguir al sistema se
-// usa la opción "Sistema" en Ajustes.
+// Botón rápido de la cabecera: alterna claro/oscuro y fija la elección.
+// Para volver a seguir al sistema se usa la opción "Sistema" en Ajustes.
 export function toggleTheme() {
   ui.theme = effectiveTheme.value === 'dark' ? 'light' : 'dark';
 }
 
+// ---- Preferencias persistentes ----
+watch(
+  () => ({ viewMode: ui.viewMode, selection: ui.selection }),
+  (value) => savePrefs(value),
+  { deep: true },
+);
+
+export function setViewMode(mode) {
+  ui.viewMode = mode === 'list' ? 'list' : 'grid';
+}
+
+// ---- Selección ----
+export function select(type, id = null) {
+  ui.selection = { type, id };
+  ui.sidebarOpen = false;
+}
+
+// Si se elimina lo seleccionado, volver a "Todos"
+watchEffect(() => {
+  const { type, id } = ui.selection;
+  const exists =
+    type === 'all' ||
+    (type === 'account' && data.accounts.some((a) => a.id === id)) ||
+    (type === 'category' && data.categories.some((c) => c.id === id));
+  if (!exists) ui.selection = { type: 'all', id: null };
+});
+
+// Cuenta "activa": la seleccionada, la de la categoría seleccionada o la primera
+export const activeAccountId = computed(() => {
+  const { type, id } = ui.selection;
+  if (type === 'account') return id;
+  if (type === 'category') return findCategory(id)?.accountId ?? null;
+  return sortedAccounts.value[0]?.id ?? null;
+});
+
+// Categoría por defecto al crear un enlace
+export const defaultCategoryId = computed(() => {
+  const { type, id } = ui.selection;
+  if (type === 'category') return id;
+  if (type === 'account') return categoriesByAccount.value.get(id)?.[0]?.id ?? null;
+  return allCategoriesSorted.value[0]?.id ?? null;
+});
+
+// Lo que muestra la zona principal: título y categorías visibles
+export const currentView = computed(() => {
+  const { type, id } = ui.selection;
+  if (type === 'category') {
+    const category = findCategory(id);
+    return {
+      type,
+      title: category?.name ?? '',
+      subtitle: findAccount(category?.accountId)?.name ?? '',
+      account: findAccount(category?.accountId),
+      categories: category ? [category] : [],
+    };
+  }
+  if (type === 'account') {
+    const account = findAccount(id);
+    return {
+      type,
+      title: account?.name ?? '',
+      subtitle: account?.email ?? '',
+      account,
+      categories: categoriesByAccount.value.get(id) ?? [],
+    };
+  }
+  return {
+    type: 'all',
+    title: 'Todos los enlaces',
+    subtitle: 'Tus pestañas pendientes, organizadas en un solo lugar.',
+    account: null,
+    categories: allCategoriesSorted.value,
+  };
+});
+
+// ---- Paneles y modales ----
 export function setSidebarOpen(open) {
   ui.sidebarOpen = open;
 }
 
 export function setSettingsOpen(open) {
   ui.settingsOpen = open;
+}
+
+export function openAccountForm(accountId = null) {
+  ui.accountForm = { accountId };
+}
+
+export function openCategoryForm({ categoryId = null, accountId = null } = {}) {
+  ui.categoryForm = { categoryId, accountId: accountId ?? activeAccountId.value };
+}
+
+export function openLinkForm({ linkId = null, categoryId = null, bulk = false } = {}) {
+  ui.linkForm = { linkId, categoryId: categoryId ?? defaultCategoryId.value, bulk };
+}
+
+export function closeForms() {
+  ui.accountForm = null;
+  ui.categoryForm = null;
+  ui.linkForm = null;
+}
+
+// Diálogo de confirmación. Devuelve una promesa que se resuelve a true/false.
+export function confirmAction({ title, message, confirmLabel = 'Aceptar', danger = false }) {
+  if (ui.confirm) ui.confirm.resolve(false);
+  return new Promise((resolve) => {
+    ui.confirm = { title, message, confirmLabel, danger, resolve };
+  });
+}
+
+export function resolveConfirm(result) {
+  const dialog = ui.confirm;
+  ui.confirm = null;
+  dialog?.resolve(result);
+}
+
+// Avisos breves ("Enlace eliminado", errores…)
+let toastTimer = null;
+export function showToast(message, kind = 'info') {
+  clearTimeout(toastTimer);
+  ui.toast = { id: createId(), message, kind };
+  toastTimer = setTimeout(() => (ui.toast = null), kind === 'error' ? 6000 : 3500);
+}
+
+export function dismissToast() {
+  clearTimeout(toastTimer);
+  ui.toast = null;
 }
