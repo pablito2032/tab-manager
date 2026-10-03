@@ -90,6 +90,9 @@ const ICON_PATHS = {
   grip: 'M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01',
   refresh: 'M20 11a8 8 0 0 0-14.3-4.9L4 8M4 4v4h4M4 13a8 8 0 0 0 14.3 4.9L20 16M20 20v-4h-4',
   filter: 'M4 5h16l-6 8v6l-4-1v-5z',
+  image: 'M4 5h16v14H4zM4 15l4-4 4 4 3-3 5 5M15 9h.01',
+  globe: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM3 12h18M12 3c2.5 2.5 3.5 5.5 3.5 9s-1 6.5-3.5 9c-2.5-2.5-3.5-5.5-3.5-9s1-6.5 3.5-9z',
+  check: 'M5 12l5 5L20 7',
 };
 
 // Componente funcional <AppIcon name="..." /> — decorativo (aria-hidden)
@@ -367,22 +370,18 @@ const USELESS_TITLES = [
 
 // ¿Merece la pena consultar el título a un servicio externo?
 export function canFetchTitle(url) {
-  let u;
-  try {
-    u = new URL(url);
-  } catch {
-    return false;
-  }
-  const host = u.hostname.replace(/^www\./, '');
-  if (host === 'localhost' || /^(\d+\.){3}\d+$/.test(host) || /\.(local|internal|lan)$/.test(host)) return false;
-  if (PRIVATE_PAGES.some(([hostRe, pathRe]) => hostRe.test(host) && pathRe.test(u.pathname))) return false;
+  if (isPrivateUrl(url)) return false;
   // Las búsquedas ya tienen un buen título deducido de la URL
-  if (SEARCH_ENGINES.some(([hostRe, , , pathRe]) => hostRe.test(host) && pathRe.test(u.pathname))) return false;
-  return true;
+  const u = new URL(url);
+  const host = u.hostname.replace(/^www\./, '');
+  return !SEARCH_ENGINES.some(([hostRe, , , pathRe]) => hostRe.test(host) && pathRe.test(u.pathname));
 }
 
 function cleanTitle(title, url) {
-  const text = String(title ?? '').replace(/\s+/g, ' ').trim();
+  const text = String(title ?? '')
+    .replace(/\s+/g, ' ')
+    .replace(/^GitHub - /, '') // "GitHub - usuario/repo: descripción"
+    .trim();
   if (!text || text.length > 300) return null;
   if (text.toLowerCase() === getDomain(url).toLowerCase()) return null;
   if (USELESS_TITLES.some((re) => re.test(text))) return null;
@@ -401,21 +400,156 @@ async function fetchJson(endpoint, timeoutMs) {
   }
 }
 
-// Devuelve el título real de la página o null si no se pudo obtener
-export async function fetchPageTitle(url, { timeoutMs = 8000 } = {}) {
-  if (!canFetchTitle(url)) return null;
-  const host = getDomain(url);
+// ¿Es una página privada o local, que ningún servicio externo puede leer?
+export function isPrivateUrl(url) {
+  let u;
   try {
-    if (VIDEO_HOSTS.test(host)) {
-      const oembed = await fetchJson(`https://noembed.com/embed?url=${encodeURIComponent(url)}`, timeoutMs);
-      const title = cleanTitle(oembed?.title, url);
-      if (title) return title;
-    }
-    const meta = await fetchJson(`https://api.microlink.io/?url=${encodeURIComponent(url)}`, timeoutMs);
-    return meta?.status === 'success' ? cleanTitle(meta.data?.title, url) : null;
+    u = new URL(url);
   } catch {
-    return null; // sin red, tiempo agotado, CORS…
+    return true;
   }
+  const host = u.hostname.replace(/^www\./, '');
+  if (host === 'localhost' || /^(\d+\.){3}\d+$/.test(host) || /\.(local|internal|lan)$/.test(host)) return true;
+  return PRIVATE_PAGES.some(([hostRe, pathRe]) => hostRe.test(host) && pathRe.test(u.pathname));
+}
+
+// Metadatos de la página: { title, description, image, logo, publisher, author }
+// Se guardan en memoria durante la sesión (también las promesas en curso)
+// para no repetir consultas al abrir varias veces la misma vista previa.
+const metadataCache = new Map();
+
+export function fetchPageMetadata(url, { timeoutMs = 8000 } = {}) {
+  if (!canFetchTitle(url)) return Promise.resolve(null);
+  if (metadataCache.has(url)) return metadataCache.get(url);
+  const promise = (async () => {
+    const host = getDomain(url);
+    let meta = null;
+    try {
+      if (VIDEO_HOSTS.test(host)) {
+        const oembed = await fetchJson(`https://noembed.com/embed?url=${encodeURIComponent(url)}`, timeoutMs);
+        if (oembed && !oembed.error && oembed.title) {
+          meta = {
+            title: oembed.title,
+            description: '',
+            image: oembed.thumbnail_url || '',
+            logo: '',
+            publisher: oembed.provider_name || '',
+            author: oembed.author_name || '',
+          };
+        }
+      }
+      if (!meta) {
+        const res = await fetchJson(`https://api.microlink.io/?url=${encodeURIComponent(url)}`, timeoutMs);
+        if (res?.status === 'success' && res.data) {
+          const d = res.data;
+          meta = {
+            title: d.title || '',
+            description: d.description || '',
+            image: d.image?.url || '',
+            logo: d.logo?.url || '',
+            publisher: d.publisher || '',
+            author: d.author || '',
+          };
+        }
+      }
+    } catch {
+      meta = null; // sin red, tiempo agotado, CORS…
+    }
+    if (!meta) metadataCache.delete(url); // permitir reintentar más tarde
+    return meta;
+  })();
+  metadataCache.set(url, promise);
+  return promise;
+}
+
+// Devuelve el título real de la página o null si no se pudo obtener
+export async function fetchPageTitle(url, options) {
+  const meta = await fetchPageMetadata(url, options);
+  return meta ? cleanTitle(meta.title, url) : null;
+}
+
+// ---------------------------------------------------------------------------
+// Vista previa
+// ---------------------------------------------------------------------------
+
+// Sitios que se sabe que impiden mostrarse dentro de un iframe
+// (cabeceras X-Frame-Options / CSP frame-ancestors).
+const FRAME_BLOCKED_HOSTS = [
+  /(^|\.)google\.[a-z.]+$/, /(^|\.)youtube\.com$/, /^github\.com$/, /^gist\.github\.com$/, /^gitlab\.com$/,
+  /^(twitter|x)\.com$/, /(^|\.)facebook\.com$/, /^instagram\.com$/, /(^|\.)linkedin\.com$/,
+  /(^|\.)reddit\.com$/, /(^|\.)amazon\.[a-z.]+$/, /(^|\.)stackoverflow\.com$/, /(^|\.)stackexchange\.com$/,
+  /^search\.brave\.com$/, /^bing\.com$/, /^duckduckgo\.com$/, /(^|\.)yahoo\.com$/,
+  /^developer\.mozilla\.org$/, /(^|\.)microsoft\.com$/, /(^|\.)apple\.com$/, /(^|\.)netflix\.com$/,
+  /^(chat\.)?openai\.com$/, /^chatgpt\.com$/, /^claude\.ai$/, /(^|\.)notion\.(so|site)$/, /^figma\.com$/,
+  /(^|\.)discord\.com$/, /(^|\.)whatsapp\.com$/, /(^|\.)tiktok\.com$/, /(^|\.)pinterest\.[a-z.]+$/,
+  /(^|\.)twitch\.tv$/, /(^|\.)spotify\.com$/, /^web\.telegram\.org$/, /(^|\.)paypal\.com$/,
+];
+
+// Convierte "90", "90s" o "1m30s" en segundos
+function parseTimestamp(value) {
+  if (!value) return 0;
+  if (/^\d+s?$/.test(value)) return parseInt(value, 10);
+  const match = value.match(/^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$/);
+  return match ? (+match[1] || 0) * 3600 + (+match[2] || 0) * 60 + (+match[3] || 0) : 0;
+}
+
+// Extrae el id de un vídeo de YouTube
+function youtubeId(u, host) {
+  if (host === 'youtu.be') return u.pathname.slice(1).split('/')[0] || null;
+  if (/^((m|music)\.)?youtube\.com$/.test(host)) {
+    if (u.pathname === '/watch') return u.searchParams.get('v');
+    const match = u.pathname.match(/^\/(shorts|live|embed)\/([\w-]+)/);
+    if (match) return match[2];
+  }
+  return null;
+}
+
+// Decide cómo previsualizar una URL:
+//   { mode: 'embed', src }  → versión pensada para incrustarse (YouTube, Docs…)
+//   { mode: 'frame', src }  → la propia página, si no sabemos que lo bloquee
+//   { mode: 'summary', reason } → mejor mostrar el resumen directamente
+export function getPreviewSource(url) {
+  let u;
+  try {
+    u = new URL(url);
+  } catch {
+    return { mode: 'summary', reason: 'invalid' };
+  }
+  const host = u.hostname.replace(/^www\./, '');
+
+  // ---- Versiones incrustables conocidas ----
+  const ytId = youtubeId(u, host);
+  if (ytId) {
+    const start = parseTimestamp(u.searchParams.get('t') ?? u.searchParams.get('start'));
+    return {
+      mode: 'embed',
+      src: `https://www.youtube-nocookie.com/embed/${encodeURIComponent(ytId)}${start > 0 ? `?start=${start}` : ''}`,
+    };
+  }
+  const vimeo = host === 'vimeo.com' && u.pathname.match(/^\/(\d+)/);
+  if (vimeo) return { mode: 'embed', src: `https://player.vimeo.com/video/${vimeo[1]}` };
+
+  const spotify = host === 'open.spotify.com' && u.pathname.match(/^\/(track|album|playlist|episode|show|artist)\/(\w+)/);
+  if (spotify) return { mode: 'embed', src: `https://open.spotify.com/embed/${spotify[1]}/${spotify[2]}` };
+
+  // Google Docs / Drive: /preview se puede incrustar (requiere sesión iniciada en Google)
+  const doc = host === 'docs.google.com' && u.pathname.match(/^\/(document|spreadsheets|presentation)\/d\/([\w-]+)/);
+  if (doc) return { mode: 'embed', src: `https://docs.google.com/${doc[1]}/d/${doc[2]}/preview`, private: true };
+  const driveFile = host === 'drive.google.com' && u.pathname.match(/^\/file\/d\/([\w-]+)/);
+  if (driveFile) return { mode: 'embed', src: `https://drive.google.com/file/d/${driveFile[1]}/preview`, private: true };
+
+  // ---- Casos en los que el iframe no funcionará ----
+  // Una página https (como GitHub Pages) no puede incrustar contenido http
+  if (u.protocol === 'http:' && location.protocol === 'https:') return { mode: 'summary', reason: 'insecure' };
+  if (FRAME_BLOCKED_HOSTS.some((re) => re.test(host))) return { mode: 'summary', reason: 'blocked' };
+
+  return { mode: 'frame', src: u.href };
+}
+
+// Captura de pantalla generada por thum.io (gratuito, sin clave).
+// La URL de destino va tal cual al final, como indica su documentación.
+export function screenshotUrl(url) {
+  return `https://image.thum.io/get/width/800/crop/1000/noanimate/${url}`;
 }
 
 // ---------------------------------------------------------------------------

@@ -14,6 +14,7 @@ import {
   dismissToast,
   openLinkForm,
   isSearching,
+  closePreview,
 } from './store.js';
 import { AppIcon, BaseModal } from './utils.js';
 import Sidebar from './components/Sidebar.js';
@@ -47,6 +48,11 @@ const App = {
 
     function onGlobalKeydown(event) {
       if (event.ctrlKey || event.metaKey || event.altKey) return;
+      // Esc cierra la vista previa si no hay un diálogo encima
+      if (event.key === 'Escape' && ui.previewLinkId && !anyModalOpen() && event.target.id !== 'global-search') {
+        closePreview();
+        return;
+      }
       if (isTypingTarget(event.target) || anyModalOpen()) return;
       if (event.key === '/') {
         event.preventDefault();
@@ -147,7 +153,8 @@ const App = {
           </div>
         </main>
 
-        <PreviewPanel v-if="previewLink" :link="previewLink" @close="ui.previewLinkId = null" />
+        <!-- :key reinicia el panel al cambiar de enlace -->
+        <PreviewPanel v-if="previewLink" :key="previewLink.id" :link="previewLink" />
       </div>
 
       <LinkForm

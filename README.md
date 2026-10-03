@@ -4,7 +4,7 @@ Gestor web personal de enlaces pendientes: sustituye el hábito de tener decenas
 
 Sitio 100 % estático: HTML, CSS y JavaScript (módulos ES) con **Vue 3** y **SortableJS** cargados desde CDN. Sin Node.js, sin npm y sin paso de compilación.
 
-> **Estado:** fase 3 de 6 (búsqueda, filtros y drag & drop).
+> **Estado:** fase 4 de 6 (vista previa).
 
 ## Ejecutar en local
 
@@ -68,6 +68,16 @@ Una web estática no puede leer el HTML de otras páginas (CORS), así que el t�
 
 Solo se sustituyen los títulos automáticos: si escribes uno propio, se respeta. La consulta externa se puede desactivar en **Ajustes → Títulos de las páginas**.
 
+### Vista previa
+
+Pulsa el icono del ojo de un enlace para abrir su vista previa (solo se carga la de ese enlace). En escritorio aparece a la derecha; en móvil ocupa toda la pantalla. `Esc` la cierra.
+
+- **En vivo:** la página dentro de un `<iframe>` con `sandbox`. Para YouTube, Vimeo, Spotify y Google Docs/Drive se usa su versión incrustable oficial.
+- **Resumen:** tarjeta con título, descripción e imagen ([microlink.io](https://microlink.io) / [noembed.com](https://noembed.com)) y una captura de [thum.io](https://www.thum.io).
+- **Abrir en pestaña nueva** siempre disponible, y un botón para marcar el enlace como visto.
+
+Muchas webs (Google, GitHub, X, Reddit…) prohíben mostrarse dentro de otras páginas, y el navegador no avisa cuando ocurre. Por eso la app abre directamente el resumen en los sitios que se sabe que lo bloquean, pasa al resumen si la página no responde en 12 s y, si ves la vista en blanco, el enlace **"¿Aparece en blanco? Ver el resumen"** recuerda ese dominio para la próxima vez (se puede deshacer con **Intentar en vivo**).
+
 > **Abrir todos:** muchos navegadores solo dejan abrir una pestaña por clic. Si se bloquean las demás, permite las ventanas emergentes para este sitio (icono en la barra de direcciones) y vuelve a pulsar.
 
 ## Datos y almacenamiento
@@ -91,7 +101,7 @@ Todo se guarda automáticamente en `localStorage` del navegador (clave `tabmanag
 - `status` admite `pending` (pendiente), `seen` (visto) y `saved` (guardado).
 - El campo `version` permite migrar el formato en el futuro (`migrateData` en `js/storage.js`); al cargar se validan los datos y se descartan registros huérfanos o inválidos.
 - Si tienes la app abierta en varias pestañas, los cambios se sincronizan entre ellas.
-- Los títulos obtenidos de servicios externos se guardan en caché (`tabmanager:title-cache`) para no repetir consultas.
+- Los títulos obtenidos de servicios externos se guardan en caché (`tabmanager:title-cache`) para no repetir consultas, y los dominios que no se ven en vivo en `tabmanager:frame-blocked`.
 - Los datos viven solo en este navegador: borrar los datos del sitio los elimina. La exportación a JSON llega en la fase 5.
 
 ## Temas

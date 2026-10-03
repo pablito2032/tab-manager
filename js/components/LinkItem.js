@@ -13,6 +13,7 @@ import {
   deleteLink,
   moveLinkBy,
   openLinkForm,
+  openPreview,
   confirmAction,
   showToast,
   announce,
@@ -83,8 +84,12 @@ export default {
       document.querySelector(`[data-drag-handle="${id}"]`)?.focus();
     }
 
+    const isPreviewing = computed(() => ui.previewLinkId === props.link.id);
+
     return {
       ui,
+      isPreviewing,
+      openPreview,
       statuses: LINK_STATUSES,
       faviconFailed,
       domain,
@@ -99,7 +104,7 @@ export default {
     };
   },
   template: `
-    <article class="link-item" :data-status="link.status">
+    <article class="link-item" :class="{ 'is-previewing': isPreviewing }" :data-status="link.status">
       <button
         type="button"
         class="link-item__drag"
@@ -151,6 +156,18 @@ export default {
         </select>
 
         <div class="link-item__actions">
+          <button
+            type="button"
+            class="icon-btn icon-btn--sm"
+            :class="{ 'is-active': isPreviewing }"
+            :aria-label="'Vista previa de ' + link.title"
+            :aria-pressed="isPreviewing ? 'true' : 'false'"
+            aria-controls="preview-panel"
+            title="Vista previa"
+            @click="openPreview(link.id)"
+          >
+            <AppIcon name="eye" size="sm" />
+          </button>
           <button type="button" class="icon-btn icon-btn--sm" :aria-label="'Editar ' + link.title" title="Editar" @click="edit">
             <AppIcon name="edit" size="sm" />
           </button>

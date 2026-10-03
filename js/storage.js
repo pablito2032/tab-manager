@@ -19,6 +19,7 @@ export const THEME_KEY = 'tabmanager:theme';
 export const DATA_KEY = 'tabmanager:data';
 export const PREFS_KEY = 'tabmanager:prefs';
 export const TITLE_CACHE_KEY = 'tabmanager:title-cache';
+export const FRAME_BLOCKED_KEY = 'tabmanager:frame-blocked';
 
 // Versión actual del formato de datos
 export const DATA_VERSION = 1;
@@ -109,6 +110,18 @@ export function saveTitleCache(cache) {
     for (const [url] of entries.slice(TITLE_CACHE_LIMIT)) delete cache[url];
   }
   safeSet(TITLE_CACHE_KEY, JSON.stringify(cache));
+}
+
+// ---------------------------------------------------------------------------
+// Dominios que el usuario marcó como "no se ve en la vista previa"
+// ---------------------------------------------------------------------------
+export function loadFrameBlockedHosts() {
+  const list = safeParse(safeGet(FRAME_BLOCKED_KEY));
+  return Array.isArray(list) ? list.filter((h) => typeof h === 'string') : [];
+}
+
+export function saveFrameBlockedHosts(hosts) {
+  safeSet(FRAME_BLOCKED_KEY, JSON.stringify(hosts.slice(-500)));
 }
 
 // ---------------------------------------------------------------------------

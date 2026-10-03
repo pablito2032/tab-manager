@@ -205,6 +205,13 @@
   }
 }
 
+/* Pantallas grandes: vista previa más ancha */
+@media (min-width: 1440px) {
+  :root {
+    --preview-width: 520px;
+  }
+}
+
 /* ---- Animaciones compartidas ---- */
 @keyframes fade-in {
   from { opacity: 0; }

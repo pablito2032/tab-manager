@@ -20,6 +20,8 @@ import {
   savePrefs,
   loadTitleCache,
   saveTitleCache,
+  loadFrameBlockedHosts,
+  saveFrameBlockedHosts,
 } from './storage.js';
 import {
   createId,
@@ -693,6 +695,42 @@ export function openCategoryForm({ categoryId = null, accountId = null } = {}) {
 
 export function openLinkForm({ linkId = null, categoryId = null, bulk = false } = {}) {
   ui.linkForm = { linkId, categoryId: categoryId ?? defaultCategoryId.value, bulk };
+}
+
+// ---- Vista previa ----
+// Se guarda qué elemento tenía el foco para devolvérselo al cerrar
+let previewOpener = null;
+
+export function openPreview(linkId) {
+  if (ui.previewLinkId === linkId) return closePreview();
+  if (!ui.previewLinkId) previewOpener = document.activeElement;
+  ui.previewLinkId = linkId;
+}
+
+export function closePreview() {
+  ui.previewLinkId = null;
+  const opener = previewOpener;
+  previewOpener = null;
+  if (opener && document.contains(opener)) opener.focus();
+}
+
+// Si se elimina el enlace en vista previa, cerrar el panel
+watchEffect(() => {
+  if (ui.previewLinkId && !data.links.some((l) => l.id === ui.previewLinkId)) ui.previewLinkId = null;
+});
+
+// Dominios donde el iframe no funcionó (marcados por el usuario)
+export const frameBlockedHosts = reactive(new Set(loadFrameBlockedHosts()));
+
+export function markFrameBlocked(host) {
+  if (!host || frameBlockedHosts.has(host)) return;
+  frameBlockedHosts.add(host);
+  saveFrameBlockedHosts([...frameBlockedHosts]);
+}
+
+export function unmarkFrameBlocked(host) {
+  if (!frameBlockedHosts.delete(host)) return;
+  saveFrameBlockedHosts([...frameBlockedHosts]);
 }
 
 export function closeForms() {
