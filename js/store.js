@@ -541,6 +541,9 @@ watchEffect(() => {
   } else {
     root.setAttribute('data-theme', ui.theme);
   }
+  // Color de la barra del navegador en móvil (igual que --color-bg)
+  document.querySelector('meta[name="theme-color"]')
+    ?.setAttribute('content', effectiveTheme.value === 'dark' ? '#15171c' : '#f4f5f8');
   saveThemePreference(ui.theme);
 });
 

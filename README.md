@@ -4,7 +4,7 @@ Gestor web personal de enlaces pendientes: sustituye el hábito de tener decenas
 
 Sitio 100 % estático: HTML, CSS y JavaScript (módulos ES) con **Vue 3** y **SortableJS** cargados desde CDN. Sin Node.js, sin npm y sin paso de compilación.
 
-> **Estado:** fase 5 de 6 (exportar/importar y sincronización en la nube).
+> **Estado:** completo (6 de 6 fases). Funciona en cualquier navegador moderno (Chrome, Edge, Firefox, Safari) en escritorio y móvil.
 
 ## Ejecutar en local
 
@@ -82,13 +82,13 @@ assets/icons/       Iconos y favicon
 
 1. Crea una **cuenta** (p. ej. "Personal") con el botón `+` de la barra lateral, o pulsa **Cargar datos de ejemplo** para probar.
 2. Dentro de la cuenta, crea **categorías** (funcionan como grupos de pestañas).
-3. Añade enlaces con **Nuevo enlace**, o pega una lista de URLs (una por línea) con **Añadir varios**. El favicon se obtiene automáticamente y, si no escribes título, se usa el dominio.
+3. Añade enlaces con **Nuevo enlace**, o pega una lista de URLs (una por línea) con **Añadir varios**. El favicon se obtiene automáticamente y, si no escribes título, se deduce de la URL o se consulta el de la página (ver [Títulos de los enlaces](#títulos-de-los-enlaces)).
 4. Cambia el estado de cada enlace (Pendiente / Visto / Guardado) desde su etiqueta, y usa **Abrir todos** para abrir una categoría entera.
-
 5. **Busca** desde la cabecera (atajo `/`): busca en todas las cuentas por título, URL o nota, sin distinguir mayúsculas ni acentos. `Esc` limpia la búsqueda.
 6. **Filtra** por estado con los botones Todos / Pendientes / Vistos / Guardados.
 7. **Reordena o mueve** enlaces arrastrándolos por su asa (⋮⋮): dentro de una categoría, a otra categoría de la vista o soltándolos sobre una categoría de la barra lateral. Con el teclado: enfoca el asa y usa las flechas ↑/↓.
-8. **Atajos:** `/` buscar · `N` nuevo enlace · `Esc` cerrar diálogos.
+8. **Vista previa:** el icono del ojo muestra la página sin salir de la app (ver [Vista previa](#vista-previa)).
+9. **Atajos:** `/` buscar · `N` nuevo enlace · `Esc` cerrar diálogos, la vista previa o limpiar la búsqueda.
 
 ### Títulos de los enlaces
 
@@ -142,6 +142,18 @@ Todo se guarda automáticamente en `localStorage` del navegador (clave `tabmanag
 - El botón sol/luna de la cabecera alterna claro/oscuro; en **Ajustes** puedes volver a "Sistema".
 - La elección se guarda en `localStorage` (`tabmanager:theme`) y se aplica antes de pintar la página para evitar parpadeos.
 - Todos los colores están en `css/variables.css`; la paleta pastel de categorías tiene 10 colores con variantes para cada tema.
+
+## Diseño y accesibilidad
+
+- **Responsive, mobile first** con puntos de corte en 600, 900 y 1200 px:
+  - **< 900 px:** la barra lateral es un menú desplegable y la vista previa ocupa toda la pantalla.
+  - **900–1199 px:** barra lateral fija y vista previa como panel flotante.
+  - **≥ 1200 px:** la vista previa es una tercera columna (más ancha a partir de 1440 px).
+- **Contraste WCAG AA** comprobado en ambos temas para todos los pares de texto y fondo, incluidas las 10 etiquetas de color, los estados y los bordes de los campos (≥ 3:1).
+- **Teclado:** todo es accesible con el teclado, con foco visible; los diálogos atrapan el foco y lo devuelven al cerrarse; los enlaces se reordenan con las flechas desde su asa.
+- **Lectores de pantalla:** etiquetas `aria` en los botones con solo icono, regiones `aria-live` para avisos y resultados, y patrones ARIA estándar (diálogos, grupos de opciones, interruptores).
+- Se respeta **"reducir movimiento"** del sistema y el color de la barra del navegador móvil sigue al tema.
+- Revisado con [axe-core](https://github.com/dequelabs/axe-core) (WCAG 2.2 AA y buenas prácticas) sin incidencias en las vistas principales, en ambos temas.
 
 ## Dependencias (versiones fijadas)
 

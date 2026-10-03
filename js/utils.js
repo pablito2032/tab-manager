@@ -745,16 +745,16 @@ export const BaseModal = {
           :aria-labelledby="titleId"
           tabindex="-1"
         >
-          <header class="modal__header">
+          <div class="modal__header">
             <h2 :id="titleId" class="modal__title">{{ title }}</h2>
             <button type="button" class="icon-btn" aria-label="Cerrar" @click="close">
               <AppIcon name="close" />
             </button>
-          </header>
+          </div>
           <slot />
-          <footer v-if="$slots.footer" class="modal__footer">
+          <div v-if="$slots.footer" class="modal__footer">
             <slot name="footer" />
-          </footer>
+          </div>
         </div>
       </div>
     </Teleport>

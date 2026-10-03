@@ -105,16 +105,6 @@ export default {
   },
   template: `
     <article class="link-item" :class="{ 'is-previewing': isPreviewing }" :data-status="link.status">
-      <button
-        type="button"
-        class="link-item__drag"
-        :data-drag-handle="link.id"
-        :aria-label="'Mover ' + link.title + '. Usa las flechas para reordenar'"
-        title="Arrastra para mover · flechas para reordenar"
-        @keydown="onHandleKeydown"
-      >
-        <AppIcon name="grip" size="sm" />
-      </button>
 
       <div class="link-item__favicon" aria-hidden="true">
         <img
@@ -162,7 +152,7 @@ export default {
             :class="{ 'is-active': isPreviewing }"
             :aria-label="'Vista previa de ' + link.title"
             :aria-pressed="isPreviewing ? 'true' : 'false'"
-            aria-controls="preview-panel"
+            :aria-controls="isPreviewing ? 'preview-panel' : undefined"
             title="Vista previa"
             @click="openPreview(link.id)"
           >
@@ -173,6 +163,16 @@ export default {
           </button>
           <button type="button" class="icon-btn icon-btn--sm icon-btn--danger" :aria-label="'Eliminar ' + link.title" title="Eliminar" @click="remove">
             <AppIcon name="trash" size="sm" />
+          </button>
+          <button
+            type="button"
+            class="icon-btn icon-btn--sm link-item__drag"
+            :data-drag-handle="link.id"
+            :aria-label="'Mover ' + link.title + '. Usa las flechas para reordenar'"
+            title="Arrastra para mover · flechas para reordenar"
+            @keydown="onHandleKeydown"
+          >
+            <AppIcon name="grip" size="sm" />
           </button>
         </div>
       </div>

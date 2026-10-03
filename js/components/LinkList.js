@@ -182,7 +182,7 @@ export default {
         </div>
 
         <div v-if="hasCategories" class="page-header__actions">
-          <button type="button" class="btn" @click="openLinkForm({ bulk: true })">
+          <button type="button" class="btn" title="Añadir varios enlaces a la vez" @click="openLinkForm({ bulk: true })">
             <AppIcon name="tabs" size="sm" />
             <span class="btn__label--wide">Añadir varios</span>
           </button>

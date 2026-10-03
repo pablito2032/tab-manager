@@ -68,6 +68,16 @@ a:hover {
   text-decoration: underline;
 }
 
+/* Enlaces dentro de un texto: subrayados para no depender solo del color
+   (WCAG 1.4.1) */
+p a,
+.sync-steps a,
+.link-button {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-thickness: 1px;
+}
+
 ul,
 ol {
   list-style: none;
@@ -102,6 +112,10 @@ h1, h2, h3, h4 {
 }
 
 /* ---- Scrollbars discretas ---- */
+html {
+  accent-color: var(--color-accent);
+}
+
 * {
   scrollbar-width: thin;
   scrollbar-color: var(--color-border-strong) transparent;
@@ -146,6 +160,20 @@ h1, h2, h3, h4 {
   padding: var(--space-12) var(--space-4);
   text-align: center;
   color: var(--color-text-muted);
+}
+
+/* Bloquea el desplazamiento del fondo con modales, el menú móvil o la
+   vista previa a pantalla completa (la clase la pone app.js) */
+html.is-scroll-locked,
+html.is-scroll-locked body {
+  overflow: hidden;
+}
+
+@media (max-width: 899px) {
+  html.has-preview,
+  html.has-preview body {
+    overflow: hidden;
+  }
 }
 
 /* [v-cloak] oculta plantillas sin compilar */

@@ -2,7 +2,7 @@
 // app.js — Crea y monta la aplicación de Vue
 // ============================================================================
 
-import { createApp, computed, ref, onMounted, onBeforeUnmount } from 'vue';
+import { createApp, computed, ref, watchEffect, onMounted, onBeforeUnmount } from 'vue';
 import {
   ui,
   effectiveTheme,
@@ -70,6 +70,13 @@ const App = {
         ui.search = '';
       }
     }
+
+    // Bloquear el desplazamiento del fondo cuando hay algo encima
+    watchEffect(() => {
+      const root = document.documentElement;
+      root.classList.toggle('is-scroll-locked', anyModalOpen() || ui.sidebarOpen);
+      root.classList.toggle('has-preview', Boolean(ui.previewLinkId));
+    });
 
     onMounted(() => document.addEventListener('keydown', onGlobalKeydown));
     onBeforeUnmount(() => document.removeEventListener('keydown', onGlobalKeydown));
