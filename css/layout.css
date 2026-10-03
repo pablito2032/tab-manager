@@ -1,0 +1,222 @@
+/* ==========================================================================
+   layout.css — Estructura general y responsive (mobile first)
+   Puntos de corte: 600px, 900px, 1200px
+   --------------------------------------------------------------------------
+   < 900px  : la barra lateral es un cajón desplegable; la vista previa
+              ocupa toda la pantalla.
+   ≥ 900px  : barra lateral fija a la izquierda; la vista previa es un
+              panel flotante a la derecha.
+   ≥ 1200px : la vista previa se integra como tercera columna.
+   ========================================================================== */
+
+.app {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
+/* ---- Cabecera ---- */
+.app-header {
+  position: sticky;
+  top: 0;
+  z-index: var(--z-header);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: var(--header-height);
+  padding: 0 var(--space-4);
+  background: color-mix(in srgb, var(--color-bg) 85%, transparent);
+  backdrop-filter: saturate(1.4) blur(10px);
+  -webkit-backdrop-filter: saturate(1.4) blur(10px);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.app-header__brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold);
+  white-space: nowrap;
+}
+
+.app-header__logo {
+  width: 28px;
+  height: 28px;
+}
+
+.app-header__search {
+  flex: 1;
+  min-width: 0;
+  max-width: 560px;
+  margin: 0 auto;
+}
+
+.app-header__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+/* En móvil el nombre de la marca se oculta para dejar sitio al buscador */
+.app-header__brand-name {
+  display: none;
+}
+
+/* ---- Cuerpo: sidebar + main + preview ---- */
+.app-body {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+/* ---- Barra lateral (móvil: cajón desplegable) ---- */
+.app-sidebar {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: var(--z-sidebar);
+  width: min(var(--sidebar-width), 86vw);
+  padding: var(--space-4);
+  overflow-y: auto;
+  background: var(--color-surface);
+  box-shadow: var(--shadow-lg);
+  transform: translateX(-105%);
+  transition: transform var(--duration-slow) var(--ease);
+  visibility: hidden;
+}
+
+.app-sidebar.is-open {
+  transform: translateX(0);
+  visibility: visible;
+}
+
+/* Capa oscura detrás del cajón y de los modales */
+.app-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: calc(var(--z-sidebar) - 1);
+  background: var(--color-overlay);
+  animation: fade-in var(--duration) var(--ease);
+}
+
+/* ---- Zona principal ---- */
+.app-main {
+  flex: 1;
+  min-width: 0;
+  padding: var(--space-4);
+}
+
+.app-main__inner {
+  max-width: var(--content-max);
+  margin: 0 auto;
+}
+
+/* ---- Panel de vista previa (móvil: pantalla completa) ---- */
+.app-preview {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-preview);
+  display: flex;
+  flex-direction: column;
+  background: var(--color-surface);
+  animation: slide-in-right var(--duration-slow) var(--ease);
+}
+
+/* ==========================================================================
+   ≥ 600px — tablet pequeña
+   ========================================================================== */
+@media (min-width: 600px) {
+  .app-header {
+    padding: 0 var(--space-6);
+  }
+
+  .app-header__brand-name {
+    display: inline;
+  }
+
+  .app-main {
+    padding: var(--space-6);
+  }
+}
+
+/* ==========================================================================
+   ≥ 900px — escritorio: sidebar fija, preview flotante
+   ========================================================================== */
+@media (min-width: 900px) {
+  /* Doble clase para ganar a .icon-btn (components.css se carga después) */
+  .icon-btn.app-header__menu-toggle,
+  .app-sidebar .sidebar__top {
+    display: none;
+  }
+
+  .app-sidebar {
+    position: sticky;
+    top: var(--header-height);
+    z-index: auto;
+    flex: 0 0 var(--sidebar-width);
+    width: var(--sidebar-width);
+    height: calc(100dvh - var(--header-height));
+    background: transparent;
+    box-shadow: none;
+    border-right: 1px solid var(--color-border);
+    transform: none;
+    visibility: visible;
+    transition: none;
+  }
+
+  .app-overlay--sidebar {
+    display: none;
+  }
+
+  .app-main {
+    padding: var(--space-8);
+  }
+
+  .app-preview {
+    top: calc(var(--header-height) + var(--space-3));
+    right: var(--space-3);
+    bottom: var(--space-3);
+    left: auto;
+    width: var(--preview-width);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-lg);
+    overflow: hidden;
+  }
+}
+
+/* ==========================================================================
+   ≥ 1200px — pantalla ancha: preview como tercera columna
+   ========================================================================== */
+@media (min-width: 1200px) {
+  .app-preview {
+    position: sticky;
+    top: var(--header-height);
+    flex: 0 0 var(--preview-width);
+    height: calc(100dvh - var(--header-height));
+    border: none;
+    border-left: 1px solid var(--color-border);
+    border-radius: 0;
+    box-shadow: none;
+  }
+}
+
+/* ---- Animaciones compartidas ---- */
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slide-in-right {
+  from { opacity: 0; transform: translateX(24px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes pop-in {
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
